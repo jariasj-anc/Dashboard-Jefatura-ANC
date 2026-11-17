@@ -280,13 +280,14 @@ if MODO_DATOS == "EXCEL":
     if not archivos_excel:
         st.error("No se encontró ningún archivo Excel (.xlsx) en el repositorio.")
         st.stop()
-    archivo_local = archivos_excel[0]
+    archivo_local = archivos_excel
     with open(archivo_local, "rb") as f:
         df_carga, df_presc, df_prod, fecha_corte = cargar_desde_excel_v11(
-            f.read(), archivo_local
+            f.read()
         )
 else:
     df_carga, df_presc, df_prod, fecha_corte = cargar_desde_sybase_v11()
+
 
 
 distritos_unicos = sorted([d for d in df_carga["Distrito_Norm"].unique() if d != "" and d != "A.N.C. SEDE CENTRAL"])

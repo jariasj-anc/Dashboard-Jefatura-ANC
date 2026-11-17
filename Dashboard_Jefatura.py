@@ -273,17 +273,21 @@ def cargar_desde_sybase_v11():
         df_pr_sql = pd.read_sql("SELECT * FROM vw_anc_produccion", conn)
     return estandarizar_tablas(df_c_sql, df_p_sql, df_pr_sql)
 
+import glob
+
 if MODO_DATOS == "EXCEL":
-    with st.sidebar:
-        st.header("📂 Carga de Data Cruda")
-        archivo_subido = st.file_uploader("Sube tu Excel crudo (3 hojas)", type=["xlsx", "xls"])
-        st.markdown("---")
-    if archivo_subido is None:
-        st.info("👈 Sube tu archivo Excel crudo con las hojas **Carga Actual**, **Producción** y **Prescripciones** en el panel izquierdo.")
+    archivos_excel = glob.glob("*.xlsx")
+    if not archivos_excel:
+        st.error("No se encontró ningún archivo Excel (.xlsx) en el repositorio.")
         st.stop()
-    df_carga, df_presc, df_prod, fecha_corte = cargar_desde_excel_v11(archivo_subido.getvalue())
+    archivo_local = archivos_excel[0]
+    with open(archivo_local, "rb") as f:
+        df_carga, df_presc, df_prod, fecha_corte = cargar_desde_excel_v11(
+            f.read(), archivo_local
+        )
 else:
     df_carga, df_presc, df_prod, fecha_corte = cargar_desde_sybase_v11()
+
 
 distritos_unicos = sorted([d for d in df_carga["Distrito_Norm"].unique() if d != "" and d != "A.N.C. SEDE CENTRAL"])
 with st.sidebar:

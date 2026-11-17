@@ -280,7 +280,7 @@ if MODO_DATOS == "EXCEL":
     if not archivos_excel:
         st.error("No se encontró ningún archivo Excel (.xlsx) en el repositorio.")
         st.stop()
-    archivo_local = archivos_excel
+    archivo_local = next(iter(archivos_excel))
     with open(archivo_local, "rb") as f:
         df_carga, df_presc, df_prod, fecha_corte = cargar_desde_excel_v11(
             f.read()

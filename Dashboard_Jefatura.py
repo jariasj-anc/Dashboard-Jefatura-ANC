@@ -6,6 +6,8 @@ import unicodedata
 import numpy as np
 import pandas as pd
 import streamlit as st
+import plotly.express as px
+import plotly.graph_objects as go
 
 try:
     import pyodbc
@@ -1713,12 +1715,13 @@ if kpi_sel is not None:
         tit_p, df_p_sub = mapa_kpis_presc[kpi_sel]
         mostrar_pantalla_detalle_presc(df_p_sub, tit_p, kpi_sel)
 else:
-    tab1, tab_presc, tab2, tab3, tab4 = st.tabs([
+    tab1, tab_presc, tab2, tab3, tab4, tab_est = st.tabs([
         "📊 Sec. 1.1 y 1.2 (Carga y Etapas)",
         "⏳ Sec. 1.3 (Rango de Riesgo de Prescripción)",
         "📅 Sec. 1.4 (Calificación por Año y Mes)",
         f"🏛️ Sec. 1.5 (En Jefatura — {dist_sel if not es_nacional else 'ANC / ODANC'})",
-        "⚖️ Sec. 2 (Producción Mensual y Pronunciamientos)"
+        "⚖️ Sec. 2 (Producción Mensual y Pronunciamientos)",
+        "📐 Sec. 3 (Análisis Estadístico y Umbrales)"
     ])
 
     with tab1:
@@ -2305,7 +2308,449 @@ else:
         st.subheader(f"2.4. Producción por Magistrado — {mes_act_lbl} ({'TODOS' if es_nacional else dist_sel})")
         if not t_2_4.empty:
             mostrar_tabla_centrada(t_2_4)
+    with tab_est:
+        st.subheader(f"📐 Análisis Estadístico Integral y Control de Umbrales — {nombre_ambito}")
+        st.caption("Metodología secuencial UIA: 1) Carga al 13/11/2026 (Antigüedad, Etapas y Sub-etapas) · 2) Riesgo de Prescripción al 14/11/2026 · 3) Control Estadístico de Producción.")
+        # ----------------------------------------------------------------------
+        # 0. CONFIGURACIÓN DE UMBRALES Y FILTROS DINÁMICOS EN CASCADA
+        # ----------------------------------------------------------------------
+        with st.expander("⚙️ Configurar Umbrales Institucionales de Alerta", expanded=False):
+            u1, u2, u3 = st.columns(3)
+            umbral_antig_dias = u1.number_input("Umbral Rezago Crítico en Carga (días):", min_value=90, max_value=3650, value=365, step=30)
+            umbral_presion_crit = u2.slider("Umbral Alerta Presión Prescripción (<=30d %):", min_value=1.0, max_value=20.0, value=5.0, step=0.5)
+            umbral_sigma_prod = u3.selectbox("Banda de Control Estadístico en Producción:", [1.0, 1.5, 2.0], index=1, format_func=lambda x: f"± {x} Desv. Estándar (σ)")
 
+        # Filtros interactivos sincronizados
+        fc1, fc2, fc3, fc4, fc5 = st.columns([1.1, 1.2, 1.3, 1.0, 1.4])
+        with fc1:
+            opts_est_f = ["Todos", "Trámite", "Res. Impug."]
+            sel_est_f = st.selectbox("Estado Procesal:", opts_est_f, key="est_f_estado")
+        with fc2:
+            opts_et_f = ["Todas"] + sorted([x for x in df_act["Etapa_Cat"].dropna().unique()])
+            sel_et_f = st.selectbox("Etapa Procesal:", opts_et_f, key="est_f_etapa")
+        with fc3:
+            df_sub_disp = df_act if sel_et_f == "Todas" else df_act[df_act["Etapa_Cat"] == sel_et_f]
+            opts_sub_f = ["Todas"] + sorted([x for x in df_sub_disp["Subetapa_Raw"].dropna().unique() if str(x).strip() not in ("", "-", "SIN SUBETAPA")])
+            sel_sub_f = st.selectbox("Sub-etapa:", opts_sub_f, key="est_f_subetapa")
+        with fc4:
+            anios_est_opts = ["Todos"] + sorted([str(x) for x in df_act["Anio_Num"].unique() if x > 0], reverse=True)
+            sel_anio_f = st.selectbox("Año Creación:", anios_est_opts, key="est_f_anio")
+        with fc5:
+            opts_unid_f = ["Todas"] + sorted([x for x in df_act["Despacho o Unidad"].dropna().unique() if str(x).strip() not in ("", "-")])
+            sel_unid_f = st.selectbox("Unidad / Despacho:", opts_unid_f, key="est_f_unidad")
+
+        # Aplicar filtros a Carga
+        df_c_est = df_act.copy()
+        if sel_est_f != "Todos":
+            df_c_est = df_c_est[df_c_est["Estado_Grupo"] == sel_est_f]
+        if sel_et_f != "Todas":
+            df_c_est = df_c_est[df_c_est["Etapa_Cat"] == sel_et_f]
+        if sel_sub_f != "Todas":
+            df_c_est = df_c_est[df_c_est["Subetapa_Raw"] == sel_sub_f]
+        if sel_anio_f != "Todos":
+            df_c_est = df_c_est[df_c_est["Anio_Num"] == int(sel_anio_f)]
+        if sel_unid_f != "Todas":
+            df_c_est = df_c_est[df_c_est["Despacho o Unidad"] == sel_unid_f]
+
+        # Aplicar filtros compatibles a Prescripción y Producción
+        df_p_est = df_p_act.copy()
+        if sel_et_f != "Todas":
+            df_p_est = df_p_est[df_p_est["Etapa_Presc_Cat"] == sel_et_f]
+
+        df_pr_est = df_pr_f.copy()
+        if sel_unid_f != "Todas" and "ENCARGADO" in df_pr_est.columns:
+            u_norm_sel = norm_txt(sel_unid_f)
+            df_pr_est = df_pr_est[df_pr_est["ENCARGADO"].apply(norm_txt).str.contains(u_norm_sel[:12], na=False)]
+
+        # Fecha de corte exacta de descarga de Carga: 13/11/2026
+        fecha_corte_carga = pd.Timestamp("2026-11-13")
+        df_c_est["Antiguedad_Dias"] = (fecha_corte_carga - df_c_est["Fecha_Creacion_Dt"]).dt.days
+        df_c_est_valid = df_c_est[df_c_est["Antiguedad_Dias"].notna() & (df_c_est["Antiguedad_Dias"] >= 0)].copy()
+
+        # Función auxiliar para tarjetas semáforo de umbral
+        def card_umbral_html(titulo, valor_str, sub_str, estado_color):
+            paleta = {
+                "VERDE": ("#22c55e", "rgba(34, 197, 94, 0.14)", "🟢 DENTRO DE UMBRAL"),
+                "AMBAR": ("#f59e0b", "rgba(245, 158, 11, 0.14)", "🟡 ALERTA PREVENTIVA"),
+                "ROJO":  ("#ef4444", "rgba(239, 68, 68, 0.16)", "🔴 SUPERA UMBRAL")
+            }
+            borde_c, bg_c, badge_txt = paleta[estado_color]
+            return f"""
+            <div style="background:{bg_c}; border:1px solid #334155; border-left:5px solid {borde_c}; border-radius:10px; padding:12px 14px; height:120px; display:flex; flex-direction:column; justify-content:center;">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span style="font-size:0.73rem; font-weight:700; color:#cbd5e1; text-transform:uppercase;">{titulo}</span>
+                    <span style="font-size:0.68rem; font-weight:800; color:{borde_c};">{badge_txt}</span>
+                </div>
+                <div style="font-size:1.65rem; font-weight:800; color:#ffffff; margin:4px 0;">{valor_str}</div>
+                <div style="font-size:0.76rem; color:#e2e8f0;">{sub_str}</div>
+            </div>
+            """
+
+        st.markdown("---")
+        # ======================================================================
+        # BLOQUE I: ANÁLISIS ESTADÍSTICO DE CARGA, ANTIGÜEDAD, ETAPAS Y SUB-ETAPAS
+        # ======================================================================
+        st.markdown("### 1️⃣ Bloque I: Carga Procesal — Antigüedad, Etapas y Sub-etapas")
+
+        if df_c_est_valid.empty:
+            st.warning("No hay expedientes de carga que coincidan con los filtros seleccionados.")
+        else:
+            med_ant = float(df_c_est_valid["Antiguedad_Dias"].median())
+            q1_ant = float(df_c_est_valid["Antiguedad_Dias"].quantile(0.25))
+            q3_ant = float(df_c_est_valid["Antiguedad_Dias"].quantile(0.75))
+            ric_ant = q3_ant - q1_ant
+            rezago_cnt = int((df_c_est_valid["Antiguedad_Dias"] > umbral_antig_dias).sum())
+            pct_rezago = (rezago_cnt / len(df_c_est_valid) * 100)
+            est_rezago = "VERDE" if pct_rezago < 25 else ("AMBAR" if pct_rezago <= 45 else "ROJO")
+            est_med_ant = "VERDE" if med_ant <= umbral_antig_dias * 0.75 else ("AMBAR" if med_ant <= umbral_antig_dias else "ROJO")
+
+            # Concentración por Etapa (Índice Herfindahl-Hirschman normalizado)
+            shares_et = df_c_est["Etapa_Cat"].value_counts(normalize=True)
+            hhi_et = float((shares_et ** 2).sum() * 100)
+            et_dom = shares_et.index[0] if not shares_et.empty else "-"
+            pct_dom = float(shares_et.iloc[0] * 100) if not shares_et.empty else 0.0
+
+            k_c1, k_c2, k_c3, k_c4 = st.columns(4)
+            with k_c1:
+                st.markdown(card_umbral_html(
+                    "MEDIANA DE ANTIGÜEDAD",
+                    f"{med_ant:,.0f} días",
+                    f"Q1: {q1_ant:,.0f}d | Q3: {q3_ant:,.0f}d (RIC: {ric_ant:,.0f}d)",
+                    est_med_ant
+                ), unsafe_allow_html=True)
+            with k_c2:
+                st.markdown(card_umbral_html(
+                    f"TASA DE REZAGO (>{umbral_antig_dias}d)",
+                    f"{pct_rezago:.1f}%",
+                    f"{rezago_cnt:,} de {len(df_c_est_valid):,} exp. superan el umbral",
+                    est_rezago
+                ), unsafe_allow_html=True)
+            with k_c3:
+                st.markdown(card_umbral_html(
+                    "CONCENTRACIÓN POR ETAPA",
+                    f"{pct_dom:.1f}%",
+                    f"Etapa dominante: {et_dom} (HHI: {hhi_et:.1f})",
+                    "AMBAR" if pct_dom > 55 else "VERDE"
+                ), unsafe_allow_html=True)
+            with k_c4:
+                ratio_imp = (df_c_est["Estado_Grupo"] == "Res. Impug.").mean() * 100
+                st.markdown(card_umbral_html(
+                    "RATIO IMPUGNACIÓN / CARGA",
+                    f"{ratio_imp:.1f}%",
+                    f"Trámite: {(df_c_est['Estado_Grupo']=='Trámite').sum():,} | Impug.: {(df_c_est['Estado_Grupo']=='Res. Impug.').sum():,}",
+                    "VERDE" if ratio_imp < 15 else ("AMBAR" if ratio_imp <= 30 else "ROJO")
+                ), unsafe_allow_html=True)
+
+            st.markdown("<div style='margin-bottom: 12px;'></div>", unsafe_allow_html=True)
+
+            g_c1, g_c2 = st.columns(2)
+            g_c1, g_c2 = st.columns(2)
+            g_c1, g_c2 = st.columns(2)
+            with g_c1:
+                # Cálculo de antigüedad en años (2 decimales) y etiqueta del expediente
+                df_c_est_valid["Antiguedad_Anios"] = (df_c_est_valid["Antiguedad_Dias"] / 365.25).round(2)
+                df_c_est_valid["Exp_Info"] = (
+                    df_c_est_valid["Número"].astype(str) + "-" +
+                    df_c_est_valid["Año"].astype(str) + " (" +
+                    df_c_est_valid["Distrito Actual"].astype(str) + ")"
+                )
+
+                fig_box_c = px.box(
+                    df_c_est_valid,
+                    x="Etapa_Cat",
+                    y="Antiguedad_Dias",
+                    color="Etapa_Cat",
+                    points="outliers",
+                    custom_data=[
+                        "Antiguedad_Anios",
+                        "Exp_Info",
+                        "Fecha creación. Exp.",
+                        "Estado_Grupo",
+                        "Despacho o Unidad"
+                    ],
+                    title="Dispersión de Antigüedad (Días) por Etapa Procesal vs. Umbral",
+                    labels={
+                        "Etapa_Cat": "Etapa Procesal",
+                        "Antiguedad_Dias": "Antigüedad (días)"
+                    }
+                )
+
+                # Etiqueta flotante llamativa con Antigüedad (Días) y Antigüedad (Años) debajo
+                fig_box_c.update_traces(
+                    hovertemplate=(
+                        "<b>📂 Etapa Procesal:</b> %{x}<br>"
+                        "<b>⏳ Antigüedad (Días):</b> <span style='color:#fbbf24; font-weight:bold;'>%{y:,} días</span><br>"
+                        "<b>📅 Antigüedad (Años):</b> <span style='color:#38bdf8; font-weight:bold;'>%{customdata[0]:.2f} años</span><br>"
+                        "──────────────────────────────<br>"
+                        "<b>⚖️ Expediente:</b> %{customdata[1]}<br>"
+                        "<b>🗓️ Fecha Creación:</b> %{customdata[2]}<br>"
+                        "<b>📌 Estado:</b> %{customdata[3]}<br>"
+                        "<b>🏛️ Despacho:</b> %{customdata[4]}"
+                        "<extra></extra>"
+                    )
+                )
+
+                fig_box_c.add_hline(
+                    y=umbral_antig_dias,
+                    line_dash="dash",
+                    line_color="#ef4444",
+                    annotation_text=f"Umbral Rezago ({umbral_antig_dias}d)",
+                    annotation_position="top right"
+                )
+
+                fig_box_c.update_layout(
+                    template="plotly_dark",
+                    paper_bgcolor="#111827",
+                    plot_bgcolor="#0f172a",
+                    showlegend=False,
+                    height=390,
+                    margin=dict(l=20, r=20, t=45, b=20),
+                    hoverlabel=dict(
+                        bgcolor="#0f172a",
+                        bordercolor="#f59e0b",
+                        font_size=13,
+                        font_family="Segoe UI, Roboto, sans-serif",
+                        font_color="#f8fafc"
+                    )
+                )
+                st.plotly_chart(fig_box_c, use_container_width=True)
+
+            with g_c2:
+                # Treemap Jerárquico: Etapa -> Subetapa coloreado por Mediana de Antigüedad
+                df_tree = (
+                    df_c_est_valid.groupby(["Etapa_Cat", "Subetapa_Raw"], as_index=False)
+                    .agg(Expedientes=("Antiguedad_Dias", "count"), Mediana_Dias=("Antiguedad_Dias", "median"))
+                )
+                df_tree["Subetapa_Clean"] = df_tree["Subetapa_Raw"].replace({"-": "Sin Sub-etapa", "": "Sin Sub-etapa"}).str.title()
+                fig_tree = px.treemap(
+                    df_tree,
+                    path=["Etapa_Cat", "Subetapa_Clean"],
+                    values="Expedientes",
+                    color="Mediana_Dias",
+                    color_continuous_scale="RdYlGn_r",
+                    title="Jerarquía Etapa → Sub-etapa (Tamaño: Carga | Color: Mediana Antigüedad)",
+                    labels={"Mediana_Dias": "Mediana (días)"}
+                )
+                fig_tree.update_layout(
+                    template="plotly_dark",
+                    paper_bgcolor="#111827",
+                    height=390,
+                    margin=dict(l=15, r=15, t=45, b=15)
+                )
+                st.plotly_chart(fig_tree, use_container_width=True)
+
+        st.markdown("---")
+        # ======================================================================
+        # BLOQUE II: ANÁLISIS ESTADÍSTICO DE PRESCRIPCIÓN Y CONCENTRACIÓN
+        # ======================================================================
+        st.markdown("### 2️⃣ Bloque II: Riesgo de Prescripción — Dispersión, Umbrales y Pareto")
+
+        if df_p_est.empty:
+            st.info("Sin registros de prescripción para el filtro seleccionado.")
+        else:
+            med_presc = float(df_p_est["Dias_Calc"].median())
+            q1_p = float(df_p_est["Dias_Calc"].quantile(0.25))
+            q3_p = float(df_p_est["Dias_Calc"].quantile(0.75))
+
+            crit_alto_cnt = int((df_p_est["Dias_Calc"] <= 30).sum())
+            pct_presion = (crit_alto_cnt / len(df_p_est) * 100)
+            est_presion = "VERDE" if pct_presion < (umbral_presion_crit * 0.5) else ("AMBAR" if pct_presion <= umbral_presion_crit else "ROJO")
+
+            tasa_riesgo_rel = (len(df_p_est) / max(1, len(df_c_est)) * 100)
+            est_riesgo_rel = "VERDE" if tasa_riesgo_rel < 5 else ("AMBAR" if tasa_riesgo_rel <= 12 else "ROJO")
+
+            # Pareto Top 5 ODANCs
+            dist_p_cnt = df_p_est["Distrito_Norm"].value_counts()
+            top5_share = float(dist_p_cnt.head(5).sum() / max(1, len(df_p_est)) * 100)
+
+            kp1, kp2, kp3, kp4 = st.columns(4)
+            with kp1:
+                st.markdown(card_umbral_html(
+                    "MEDIANA DÍAS P/ PRESCRIBIR",
+                    f"{med_presc:,.0f} días",
+                    f"RIC (Q1–Q3): {q1_p:,.0f}d a {q3_p:,.0f}d",
+                    "ROJO" if med_presc <= 60 else ("AMBAR" if med_presc <= 120 else "VERDE")
+                ), unsafe_allow_html=True)
+            with kp2:
+                st.markdown(card_umbral_html(
+                    "PRESIÓN CRÍTICA (<= 30 DÍAS)",
+                    f"{pct_presion:.2f}%",
+                    f"{crit_alto_cnt:,} exp. prescritos o <=30d (Umbral: {umbral_presion_crit}%)",
+                    est_presion
+                ), unsafe_allow_html=True)
+            with kp3:
+                st.markdown(card_umbral_html(
+                    "TASA DE RIESGO RELATIVO",
+                    f"{tasa_riesgo_rel:.2f}%",
+                    f"{len(df_p_est):,} en riesgo vs. {len(df_c_est):,} en carga activa",
+                    est_riesgo_rel
+                ), unsafe_allow_html=True)
+            with kp4:
+                st.markdown(card_umbral_html(
+                    "CONCENTRACIÓN PARETO (TOP 5)",
+                    f"{top5_share:.1f}%",
+                    f"Sede líder: {dist_p_cnt.index[0].title()} ({int(dist_p_cnt.iloc[0]):,})" if not dist_p_cnt.empty else "-",
+                    "AMBAR" if top5_share > 60 else "VERDE"
+                ), unsafe_allow_html=True)
+
+            st.markdown("<div style='margin-bottom: 12px;'></div>", unsafe_allow_html=True)
+
+            gp1, gp2 = st.columns(2)
+            with gp1:
+                # Heatmap Etapa Procesal vs Rango de Riesgo
+                hm_data = pd.crosstab(df_p_est["Etapa_Presc_Cat"], df_p_est["Rango_Presc"]).reindex(
+                    index=ord_et_p, columns=ord_rangos, fill_value=0
+                )
+                hm_data.columns = ["Presc (<=0d)", "Crítico (1-15d)", "Alto (16-30d)", "Moderado (31-60d)", "Prev. (61-90d)", "Monit. (91-240d)"]
+                fig_hm = px.imshow(
+                    hm_data,
+                    text_auto=True,
+                    aspect="auto",
+                    color_continuous_scale="YlOrRd",
+                    title="Mapa de Calor: Cuellos de Botella (Etapa Procesal vs. Rango de Riesgo)",
+                    labels=dict(x="Rango de Riesgo", y="Etapa Procesal", color="Exp.")
+                )
+                fig_hm.update_layout(
+                    template="plotly_dark",
+                    paper_bgcolor="#111827",
+                    height=390,
+                    margin=dict(l=20, r=20, t=45, b=20)
+                )
+                st.plotly_chart(fig_hm, use_container_width=True)
+
+            with gp2:
+                # Gráfico de Pareto 80/20 por Sede / ODANC (o por Etapa si es sede única)
+                if es_nacional:
+                    pareto_s = df_p_est["Distrito_Norm"].value_counts().head(15)
+                    titulo_par = "Gráfico de Pareto (80/20): Top 15 Sedes con Mayor Riesgo"
+                else:
+                    pareto_s = df_p_est["Etapa_Presc_Cat"].value_counts()
+                    titulo_par = f"Gráfico de Pareto (80/20): Riesgo por Etapa — {dist_sel}"
+
+                df_par = pd.DataFrame({"Categoria": [x.title() for x in pareto_s.index], "Expedientes": pareto_s.values})
+                tot_par_base = len(df_p_est)
+                df_par["Acum_Pct"] = (df_par["Expedientes"].cumsum() / max(1, tot_par_base) * 100).round(1)
+
+                fig_par = go.Figure()
+                fig_par.add_trace(go.Bar(
+                    x=df_par["Categoria"], y=df_par["Expedientes"],
+                    name="Expedientes", marker_color="#3b82f6"
+                ))
+                fig_par.add_trace(go.Scatter(
+                    x=df_par["Categoria"], y=df_par["Acum_Pct"],
+                    name="% Acumulado", yaxis="y2", mode="lines+markers",
+                    line=dict(color="#f59e0b", width=3)
+                ))
+                fig_par.add_hline(y=80, yref="y2", line_dash="dash", line_color="#ef4444", annotation_text="Umbral 80%")
+                fig_par.update_layout(
+                    title=titulo_par,
+                    template="plotly_dark",
+                    paper_bgcolor="#111827",
+                    plot_bgcolor="#0f172a",
+                    yaxis=dict(title="Expedientes"),
+                    yaxis2=dict(title="% Acumulado", overlaying="y", side="right", range=[0, 105]),
+                    legend=dict(orientation="h", y=1.12),
+                    height=390,
+                    margin=dict(l=20, r=20, t=55, b=40)
+                )
+                st.plotly_chart(fig_par, use_container_width=True)
+
+        st.markdown("---")
+        # ======================================================================
+        # BLOQUE III: CONTROL ESTADÍSTICO DE PROCESOS (SPC) EN PRODUCCIÓN
+        # ======================================================================
+        st.markdown("### 3️⃣ Bloque III: Control Estadístico de Producción (Media ± σ)")
+
+        df_pr_valid = df_pr_est.dropna(subset=["Fecha_Desc_Dt"]).copy()
+        if df_pr_valid.empty:
+            st.info("Sin registros de producción con fecha válida para el filtro seleccionado.")
+        else:
+            df_pr_valid["Periodo_Str"] = df_pr_valid["Fecha_Desc_Dt"].dt.to_period("M").astype(str)
+            serie_m = df_pr_valid.groupby("Periodo_Str").size().sort_index()
+
+            media_pr = float(serie_m.mean())
+            std_pr = float(serie_m.std(ddof=0)) if len(serie_m) > 1 else 0.0
+            lic_pr = max(0.0, media_pr - umbral_sigma_prod * std_pr)
+            lsc_pr = media_pr + umbral_sigma_prod * std_pr
+            ultimo_val_pr = int(serie_m.iloc[-1])
+            ultimo_per_pr = serie_m.index[-1]
+
+            est_spc = "ROJO" if ultimo_val_pr < lic_pr else ("VERDE" if ultimo_val_pr >= media_pr else "AMBAR")
+            tasa_resolucion = (len(df_pr_mes_act) / max(1, len(df_c_est)) * 100)
+
+            kpr1, kpr2, kpr3 = st.columns(3)
+            with kpr1:
+                st.markdown(card_umbral_html(
+                    f"CONTROL SPC ({ultimo_per_pr})",
+                    f"{ultimo_val_pr:,} pron.",
+                    f"Media: {media_pr:,.1f} | Límite Inf. (-{umbral_sigma_prod}σ): {lic_pr:,.1f}",
+                    est_spc
+                ), unsafe_allow_html=True)
+            with kpr2:
+                cv_pr = (std_pr / media_pr * 100) if media_pr > 0 else 0.0
+                st.markdown(card_umbral_html(
+                    "COEFICIENTE DE VARIACIÓN (CV)",
+                    f"{cv_pr:.1f}%",
+                    f"Desv. Estándar (σ): {std_pr:,.1f} pron./mes",
+                    "VERDE" if cv_pr < 20 else ("AMBAR" if cv_pr <= 35 else "ROJO")
+                ), unsafe_allow_html=True)
+            with kpr3:
+                st.markdown(card_umbral_html(
+                    "TASA DE RESOLUCIÓN MENSUAL",
+                    f"{tasa_resolucion:.2f}%",
+                    f"Prod. mes actual ({len(df_pr_mes_act):,}) / Carga filtrada ({len(df_c_est):,})",
+                    "VERDE" if tasa_resolucion >= 10 else ("AMBAR" if tasa_resolucion >= 5 else "ROJO")
+                ), unsafe_allow_html=True)
+
+            st.markdown("<div style='margin-bottom: 12px;'></div>", unsafe_allow_html=True)
+
+            gpr1, gpr2 = st.columns(2)
+            with gpr1:
+                # Gráfico de Control Estadístico (SPC)
+                colores_pts = ["#ef4444" if v < lic_pr else ("#22c55e" if v >= media_pr else "#f59e0b") for v in serie_m.values]
+                fig_spc = go.Figure()
+                fig_spc.add_trace(go.Scatter(
+                    x=serie_m.index, y=serie_m.values,
+                    mode="lines+markers", name="Producción Mensual",
+                    line=dict(color="#38bdf8", width=3),
+                    marker=dict(size=10, color=colores_pts)
+                ))
+                fig_spc.add_hline(y=media_pr, line_dash="solid", line_color="#22c55e", annotation_text=f"Media ({media_pr:,.0f})")
+                fig_spc.add_hline(y=lsc_pr, line_dash="dot", line_color="#94a3b8", annotation_text=f"LSC +{umbral_sigma_prod}σ ({lsc_pr:,.0f})")
+                fig_spc.add_hline(y=lic_pr, line_dash="dash", line_color="#ef4444", annotation_text=f"LIC -{umbral_sigma_prod}σ ({lic_pr:,.0f})")
+                fig_spc.update_layout(
+                    title="Gráfico de Control Estadístico de Producción (SPC)",
+                    template="plotly_dark",
+                    paper_bgcolor="#111827",
+                    plot_bgcolor="#0f172a",
+                    xaxis_title="Periodo",
+                    yaxis_title="Pronunciamientos",
+                    height=380,
+                    margin=dict(l=20, r=20, t=45, b=20)
+                )
+                st.plotly_chart(fig_spc, use_container_width=True)
+
+            with gpr2:
+                # Ranking de Productividad por Magistrado vs Mediana (Top 12)
+                prod_mag = df_pr_mes_act["Magistrado_Prod"].value_counts().head(12).sort_values(ascending=True)
+                med_mag = float(df_pr_mes_act["Magistrado_Prod"].value_counts().median()) if not df_pr_mes_act.empty else 0.0
+                fig_mag = px.bar(
+                    x=prod_mag.values,
+                    y=prod_mag.index,
+                    orientation="h",
+                    title=f"Productividad por Magistrado ({mes_act_lbl}) vs. Mediana",
+                    labels={"x": "Pronunciamientos", "y": "Magistrado"}
+                )
+                fig_mag.update_traces(marker_color="#6366f1")
+                fig_mag.add_vline(x=med_mag, line_dash="dash", line_color="#f59e0b", annotation_text=f"Mediana ({med_mag:.0f})")
+                fig_mag.update_layout(
+                    template="plotly_dark",
+                    paper_bgcolor="#111827",
+                    plot_bgcolor="#0f172a",
+                    height=380,
+                    margin=dict(l=20, r=20, t=45, b=20)
+                )
+                st.plotly_chart(fig_mag, use_container_width=True)
     buffer_anexo = io.BytesIO()
     with pd.ExcelWriter(buffer_anexo, engine="openpyxl") as writer:
         t_1_1.to_excel(writer, sheet_name="1_1_Anio_Creacion", index=False)

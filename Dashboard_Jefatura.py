@@ -16,7 +16,7 @@ except ImportError:
 # CONFIGURACIÓN DE FUENTE DE DATOS (CAMBIAR A "SYBASE" EN PRODUCCIÓN CON UTI)
 # ==============================================================================
 MODO_DATOS = "EXCEL"  # Opciones: "EXCEL" (piloto) | "SYBASE" (tiempo real ODBC)
-
+es_nacional = True
 st.set_page_config(page_title="ANC - Análisis Estadístico Oficial (UIA)", page_icon="⚖️", layout="wide")
 
 # Estilos CSS para tarjetas KPI clicables (Carga, Atención Preferencial, Jefatura, Producción Acumulada y 6 Semáforos)
@@ -687,45 +687,37 @@ def estandarizar_tablas(df_c_raw, df_p_raw, df_pr_raw):
             )
             df_c[col_txt] = df_c[col_txt].replace({"": "-", "None": "-", "nan": "-"})
 
-    # 2. PRESCRIPCIONES
+    # 2. PRESCRIPCIONES (Limpio y directo para Excel y Sybase)
     df_p = limpiar_columnas(df_p_raw.copy())
+    
+    # 1. Asegurar solo registros con N° de expediente válido (evita filas vacías o auxiliares de Excel)
+    col_exp_p = next((c for c in df_p.columns if "EXPEDIENTE" in norm_txt(c)), None)
+    if col_exp_p:
+        df_p = df_p[df_p[col_exp_p].notna() & (~df_p[col_exp_p].astype(str).str.strip().str.upper().isin(["", "NONE", "NAN"]))].copy()
+
+    # 2. Normalización básica de campos clave
     df_p["Distrito_Norm"] = df_p["DISTRITO ACTUAL"].apply(norm_txt)
     df_p["Es_Sede_Central"] = df_p["Distrito_Norm"] == "A.N.C. SEDE CENTRAL"
-    df_p["Carga_Norm"] = df_p["CARGA"].apply(norm_txt) if "CARGA" in df_p.columns else "SI"
-    df_p["Etapa_Presc_Cat"] = df_p["ETAPA"].apply(categorizar_etapa_auto) if "ETAPA" in df_p.columns else "Otros (Abstenciones, incidentes, etc.)"
-    df_p["Fecha_Presc_Dt"] = pd.to_datetime(df_p["FECHA DE PRESCRIPCION"], errors="coerce", dayfirst=True)
+    df_p["Etapa_Presc_Cat"] = df_p["ETAPA"].apply(categorizar_etapa_auto) if "ETAPA" in df_p.columns else "Otros"
+    df_p["Fecha_Presc_Dt"] = pd.to_datetime(
+        df_p["FECHA DE PRESCRIPCION"].astype(str).str.strip(),
+        dayfirst=True,
+        errors="coerce"
+    ).dt.normalize()
 
+    # 3. Atención preferencial y Magistrado (si vienen en la consulta)
     col_ap = next((c for c in df_p.columns if "PREFERENCIAL" in norm_txt(c)), None)
-    if col_ap is not None:
-        ap_norm = df_p[col_ap].apply(norm_txt)
-        df_p["Es_Atencion_Pref"] = (ap_norm != "") & (ap_norm != "SIN ATENCION PREFERENCIAL") & (ap_norm != "NAN") & (ap_norm != "NONE")
-        df_p["Atencion_Pref_Norm"] = ap_norm
-    else:
-        df_p["Es_Atencion_Pref"] = False
-        df_p["Atencion_Pref_Norm"] = "SIN ATENCION PREFERENCIAL"
-
+    df_p["Atencion_Pref_Norm"] = df_p[col_ap].apply(norm_txt) if col_ap else "SIN ATENCION PREFERENCIAL"
+    df_p["Es_Atencion_Pref"] = ~df_p["Atencion_Pref_Norm"].isin(["", "SIN ATENCION PREFERENCIAL", "NO"])
+    
     col_mag_p = next((c for c in df_p.columns if norm_txt(c) == "MAGISTRADO"), None)
-    if col_mag_p is None and "Magistrado" in df_c.columns:
-        df_c_map = df_c[["Distrito_Norm", "Número", "Año", "Magistrado"]].drop_duplicates(subset=["Distrito_Norm", "Número", "Año"])
-        if "NUMERO" in df_p.columns and "AÑO" in df_p.columns:
-            df_p["_num_tmp"] = df_p["NUMERO"].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
-            df_p["_anio_tmp"] = df_p["AÑO"].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
-            df_p = df_p.merge(
-                df_c_map,
-                left_on=["Distrito_Norm", "_num_tmp", "_anio_tmp"],
-                right_on=["Distrito_Norm", "Número", "Año"],
-                how="left"
-            ).drop(columns=["_num_tmp", "_anio_tmp", "Número", "Año"], errors="ignore")
-            df_p["MAGISTRADO"] = df_p["Magistrado"].fillna("-")
-            df_p = df_p.drop(columns=["Magistrado"], errors="ignore")
-    elif col_mag_p is not None and col_mag_p != "MAGISTRADO":
-        df_p["MAGISTRADO"] = df_p[col_mag_p].fillna("-")
+    df_p["MAGISTRADO"] = df_p[col_mag_p].fillna("-") if col_mag_p else "-"
 
-    fecha_corte_presc = pd.Timestamp("2026-11-13")
+    # 4. Cálculo único y exacto de días por prescribir (prioriza columna de Excel/SQL)
+    fecha_corte_presc = pd.Timestamp("2026-11-14")
     df_p["Dias_Calc"] = (df_p["Fecha_Presc_Dt"] - fecha_corte_presc).dt.days
     df_p["Rango_Presc"] = df_p["Dias_Calc"].apply(clasificar_presc_rango)
     df_p = df_p[df_p["Rango_Presc"].notna()].copy()
-
     # 3. PRODUCCIÓN
     df_pr = limpiar_columnas(df_pr_raw.copy())
     cols_pr_ok = [
@@ -836,8 +828,8 @@ df_act = pd.concat([df_tram, df_imp], ignore_index=True)
 df_act["Estado_Grupo"] = np.where(df_act["Estado_Norm"] == "TRAMITE", "Trámite", "Res. Impug.")
 
 df_jef_all = df_act[df_act["Despacho_Norm"].str.contains("JEFATURA", na=False)]
-df_p_240 = df_p_f[(df_p_f["Carga_Norm"] == "SI") & (df_p_f["Dias_Calc"] <= 240)]
-df_p_act = df_p_f[df_p_f["Carga_Norm"] == "SI"].copy()
+df_p_240 = df_p_f[df_p_f["Dias_Calc"] <= 240].copy()
+df_p_act = df_p_f.copy()
 df_p_vigente = df_p_act[df_p_act["Dias_Calc"] >= 1].copy()
 df_p_atencion_pref = df_p_vigente[df_p_vigente["Es_Atencion_Pref"]].copy()
 
@@ -956,7 +948,22 @@ def mostrar_pantalla_detalle_presc(df_base: pd.DataFrame, titulo: str, clave: st
         df_mostrar["FECHA DE PRESCRIPCION"] = f_p_dt.dt.strftime("%d/%m/%Y").fillna(df_mostrar["FECHA DE PRESCRIPCION"].astype(str))
 
     df_mostrar["DÍAS P/ PRESCRIBIR"] = df_det["Dias_Calc"].astype(int)
-    df_mostrar["RANGO DE RIESGO DE EXPEDIENTES PRESCRITOS Y POR PRESCRIBIR"] = df_det["Rango_Presc"]
+    mapa_iconos_rango = {
+        clave_rg: f"{icono_rg} {clave_rg}".strip()
+        for _, clave_rg, icono_rg, _, _, _ in config_colores_rangos
+    }
+    df_mostrar["RANGO DE RIESGO DE EXPEDIENTES PRESCRITOS Y POR PRESCRIBIR"] = df_det["Rango_Presc"].map(
+        lambda x: mapa_iconos_rango.get(
+            x,
+            (
+                f"⚫ {x}" if "Prescrito" in str(x)
+                else f"🔴 {x}" if "Crítico" in str(x)
+                else f"🟠 {x}" if "Alto" in str(x)
+                else f"🟡 {x}" if "Medio" in str(x)
+                else f"🟢 {x}"
+            )
+        )
+    )
 
     df_mostrar = df_mostrar.reset_index(drop=True)
     df_mostrar.insert(0, "N°", range(1, len(df_mostrar) + 1))
@@ -984,140 +991,6 @@ def mostrar_pantalla_detalle_presc(df_base: pd.DataFrame, titulo: str, clave: st
             file_name=f"{nombre_arch}.pdf",
             mime="application/pdf",
             key=f"pdf_p_{clave}",
-            use_container_width=True
-        )
-        def mostrar_pantalla_detalle_prod(df_base: pd.DataFrame, titulo: str, clave: str):
-         df_det = df_base.copy()
-    if "Fecha_Desc_Dt" in df_det.columns:
-        df_det = df_det.sort_values("Fecha_Desc_Dt", ascending=False)
-
-    col_t, col_close = st.columns([5, 1])
-    with col_t:
-        st.subheader(f"⚖️ {titulo} — {len(df_det):,} registros")
-    with col_close:
-        if st.button("⬅ Volver al Dashboard", key=f"volver_{clave}", use_container_width=True):
-            st.session_state["kpi_activo"] = None
-            st.rerun()
-
-    # Columnas auxiliares para Año y Mes (solo nombre del mes, sin año)
-    if "Fecha_Desc_Dt" in df_det.columns:
-        df_det["_anio_desc"] = df_det["Fecha_Desc_Dt"].apply(
-            lambda d: str(int(d.year)) if pd.notna(d) else "Sin año"
-        )
-        df_det["_mes_num"] = df_det["Fecha_Desc_Dt"].apply(
-            lambda d: int(d.month) if pd.notna(d) else 99
-        )
-        df_det["_mes_lbl"] = df_det["Fecha_Desc_Dt"].apply(
-            lambda d: MESES_NOM[d.month] if pd.notna(d) else "Sin fecha"
-        )
-    else:
-        df_det["_anio_desc"] = "Sin año"
-        df_det["_mes_num"] = 99
-        df_det["_mes_lbl"] = "Sin fecha"
-
-    df_det["_tipo_doc"] = np.where(df_det["Es_Informe"], "Informe", "Resolución")
-
-    # 5 Filtros: Año (2026 por defecto), Mes (mes actual por defecto), Magistrado, Tipo y Buscador
-    f1, f2, f3, f4, f5 = st.columns([0.9, 1.1, 1.4, 1.1, 1.5])
-    with f1:
-        anios_ord = sorted(
-            [a for a in df_det["_anio_desc"].unique() if a != "Sin año"],
-            reverse=True
-        )
-        if "Sin año" in df_det["_anio_desc"].unique():
-            anios_ord.append("Sin año")
-        opts_anio = ["Todos"] + anios_ord
-        idx_anio_def = opts_anio.index("2026") if "2026" in opts_anio else (1 if len(opts_anio) > 1 else 0)
-        sel_anio = st.selectbox("Año (Descarga):", opts_anio, index=idx_anio_def, key=f"f_anio_pr_{clave}")
-        if sel_anio != "Todos":
-            df_det = df_det[df_det["_anio_desc"] == sel_anio]
-
-    with f2:
-        meses_ord = (
-            df_det[["_mes_num", "_mes_lbl"]]
-            .drop_duplicates()
-            .sort_values("_mes_num", ascending=True)["_mes_lbl"]
-            .tolist()
-        )
-        opts_mes = ["Todos"] + meses_ord
-        mes_actual_def = None
-        if "Fecha_Desc_Dt" in df_det.columns and df_det["Fecha_Desc_Dt"].notna().any():
-            max_f = df_det["Fecha_Desc_Dt"].dropna().max()
-            mes_actual_def = MESES_NOM[int(max_f.month)]
-        idx_mes_def = opts_mes.index(mes_actual_def) if mes_actual_def in opts_mes else 0
-        sel_mes = st.selectbox("Mes de Resol.:", opts_mes, index=idx_mes_def, key=f"f_mes_pr_{clave}")
-        if sel_mes != "Todos":
-            df_det = df_det[df_det["_mes_lbl"] == sel_mes]
-
-    with f3:
-        col_mag_pr = "MAGISTRADO" if "MAGISTRADO" in df_det.columns else "Magistrado_Prod"
-        opts_mag = ["Todos"] + sorted([
-            str(x).strip() for x in df_det[col_mag_pr].dropna().unique()
-            if str(x).strip() not in ("", "-", "None", "nan", "NO ESPECIFICADO")
-        ])
-        sel_mag = st.selectbox("Magistrado:", opts_mag, key=f"f_mag_pr_{clave}")
-        if sel_mag != "Todos":
-            df_det = df_det[df_det[col_mag_pr].astype(str).str.strip() == sel_mag]
-
-    with f4:
-        sel_tipo = st.selectbox("Tipo (Inf. / Res.):", ["Todos", "Resolución", "Informe"], key=f"f_tipo_pr_{clave}")
-        if sel_tipo != "Todos":
-            df_det = df_det[df_det["_tipo_doc"] == sel_tipo]
-
-    with f5:
-        busq = st.text_input("Buscar Expediente / Pron.:", key=f"f_busq_pr_{clave}")
-        if busq:
-            mask = df_det.astype(str).apply(lambda x: x.str.contains(busq, case=False, na=False, regex=False)).any(axis=1)
-            df_det = df_det[mask]
-
-    cols_internas_pr = {
-        "Distrito_Norm", "Es_Sede_Central", "Fecha_Desc_Dt", "Es_Informe",
-        "Unidad_Prod", "Unidad_Prod_Todos", "Magistrado_Prod", "Periodo_M",
-        "Pron_Limpio", "_anio_desc", "_mes_num", "_mes_lbl", "_tipo_doc"
-    }
-    cols_orig_pr = [c for c in df_det.columns if c not in cols_internas_pr and c != "N°"]
-
-    df_mostrar = df_det[cols_orig_pr].copy()
-    if "FECHA_DESCARGA" in df_mostrar.columns:
-        f_d_dt = pd.to_datetime(df_mostrar["FECHA_DESCARGA"], errors="coerce", dayfirst=True)
-        df_mostrar["FECHA_DESCARGA"] = f_d_dt.dt.strftime("%d/%m/%Y").fillna("")
-
-    for col in df_mostrar.columns:
-        df_mostrar[col] = (
-            df_mostrar[col]
-            .fillna("")
-            .astype(str)
-            .replace({"None": "", "none": "", "NONE": "", "nan": "", "NaN": "", "NAN": "", "NaT": "", "NAT": "", "<NA>": ""})
-            .str.strip()
-        )
-
-    df_mostrar.insert(0, "Tipo Doc.", df_det["_tipo_doc"].values)
-    df_mostrar = df_mostrar.reset_index(drop=True)
-    df_mostrar.insert(0, "N°", range(1, len(df_mostrar) + 1))
-
-    st.caption(f"Mostrando **{len(df_mostrar):,}** registros de producción encontrados.")
-
-    altura_dinamica = min(480, max(75, (len(df_mostrar) + 1) * 35 + 3))
-    st.dataframe(df_mostrar, use_container_width=True, hide_index=True, height=altura_dinamica)
-
-    b1, b2, _ = st.columns([1, 1, 3])
-    nombre_arch = titulo.replace(" ", "_").replace("-", "").replace(".", "")
-    with b1:
-        st.download_button(
-            label="📥 Exportar en Excel (.xlsx)",
-            data=exportar_detalle_excel(df_mostrar),
-            file_name=f"{nombre_arch}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key=f"xlsx_pr_{clave}",
-            use_container_width=True
-        )
-    with b2:
-        st.download_button(
-            label="📄 Exportar en PDF",
-            data=exportar_detalle_pdf(df_mostrar, titulo=titulo),
-            file_name=f"{nombre_arch}.pdf",
-            mime="application/pdf",
-            key=f"pdf_pr_{clave}",
             use_container_width=True
         )
 def mostrar_pantalla_detalle_prod(df_base: pd.DataFrame, titulo: str, clave: str):
@@ -1302,11 +1175,20 @@ def render_kpis_carga():
     if es_nacional:
         k1.metric("EN CALIFICACIÓN", f"{cal_tot:,} exp.", f"{pct_cal:.1f}% de la carga total")
         k2.metric("EN JEFATURA", f"{len(df_jef_all):,} exp.", f"ANC: {j_anc:,} | ODANC: {j_oda:,}")
-        k3.metric("SIN INVENTARIAR", f"{len(df_no_inv):,} exp.", f"ANC: {ni_anc:,} | ODANC: {ni_oda:,}")
+        sub_ni = f"↑ ANC: {ni_anc:,} | ODANC: {ni_oda:,}"
     else:
         k1.metric("EN CALIFICACIÓN", f"{cal_tot:,} exp.", f"{pct_cal:.1f}% de la carga en sede")
         k2.metric("EN JEFATURA", f"{len(df_jef_all):,} exp.", f"Despacho Jefatura ({dist_sel})")
-        k3.metric("SIN INVENTARIAR", f"{len(df_no_inv):,} exp.", f"Sede: {dist_sel}")
+        sub_ni = f"↑ Sede: {dist_sel}"
+
+    with k3:
+        st.button(
+            f"SIN INVENTARIAR\n**{len(df_no_inv):,} exp.**\n*{sub_ni}*",
+            key=f"kpi_btn_no_inv_{st.session_state.get('vista_tab', '1')}",
+            on_click=alternar_kpi,
+            args=("NO_INVENTARIADO",),
+            use_container_width=True
+        )
     with k4:
         render_tarjeta_mas_antiguo(df_act, es_nacional, "EXP. MÁS ANTIGUO")
     st.markdown("<div style='margin-bottom: 10px;'></div>", unsafe_allow_html=True)
@@ -1322,20 +1204,195 @@ ord_anios = ["2026", "2025", "2024", "2023", "2022", "2021 y ant."]
 tot_lbl_11 = "TOTAL CARGA (TODOS)" if es_nacional else f"TOTAL CARGA {dist_sel}"
 t_1_1 = generar_cuadro_carga(df_act, "Anio_Grupo", ord_anios, "Año de Creación", es_nacional, dist_sel, tot_lbl_11)
 
-# Tabla 1.2 (Etapas Procesales y Sub-etapas de Calificación)
-ord_et = ["Calificación", "Instrucción", "Sanción", "Apelación", "Otros (Abstenciones, incidentes, etc.)"]
-t_et_base = generar_cuadro_carga(df_act, "Etapa_Cat", ord_et, "Etapa / Sub-etapa Procesal", es_nacional, dist_sel, "TOTAL POR ETAPAS")
+# Tabla 1.2 (Etapas Procesales y Sub-etapas de Calificación por Año y Estado - Estructura 1.2.B)
+def construir_df_etapas_anio(df_in):
+    if df_in.empty:
+        return pd.DataFrame(), []
+
+    df_v = df_in.copy()
+    df_v["Anio_Col"] = np.where(df_v["Anio_Num"] > 0, df_v["Anio_Num"].astype(str), "S/A")
+    anios_disp = sorted([a for a in df_v["Anio_Col"].unique() if a != "S/A"])
+    if "S/A" in df_v["Anio_Col"].unique():
+        anios_disp.append("S/A")
+
+    tot_gen = len(df_v)
+    ord_et = ["Calificación", "Instrucción", "Sanción", "Apelación", "Otros (Abstenciones, incidentes, etc.)"]
+    ord_sub = [
+        "   • Calificación propiamente dicha",
+        "   • Apelación (en Calificación)",
+        "   • Pend. Informe / Por Elevar / En Recepción / Otros"
+    ]
+
+    def crear_fila(num_str, etiqueta, sub_df, es_sub=False, es_tot=False):
+        fila = {
+            "N°": num_str,
+            "Etapa / Sub-etapa Procesal": etiqueta,
+            "_es_sub": es_sub,
+            "_es_total": es_tot
+        }
+        for a in anios_disp:
+            sub_a = sub_df[sub_df["Anio_Col"] == a]
+            fila[f"{a} - Trámite"] = int((sub_a["Estado_Grupo"] == "Trámite").sum())
+            fila[f"{a} - Res. Impug."] = int((sub_a["Estado_Grupo"] == "Res. Impug.").sum())
+
+        f_tra = int((sub_df["Estado_Grupo"] == "Trámite").sum())
+        f_imp = int((sub_df["Estado_Grupo"] == "Res. Impug.").sum())
+        f_tot = len(sub_df)
+        fila["Total - Trámite"] = f_tra
+        fila["Total - Res. Impug."] = f_imp
+        fila["Total"] = f_tot
+        fila["%"] = round(f_tot / tot_gen * 100, 1) if tot_gen > 0 else 0.0
+        return fila
+
+    filas = []
+    for idx_e, et_nom in enumerate(ord_et, start=1):
+        sub_et = df_v[df_v["Etapa_Cat"] == et_nom]
+        filas.append(crear_fila(str(idx_e), et_nom, sub_et, es_sub=False, es_tot=False))
+
+        if et_nom == "Calificación":
+            for sub_nom in ord_sub:
+                sub_s = sub_et[sub_et["Subetapa_Cat"] == sub_nom]
+                filas.append(crear_fila("", sub_nom, sub_s, es_sub=True, es_tot=False))
+
+    filas.append(crear_fila("", "TOTAL POR ETAPAS", df_v, es_sub=False, es_tot=True))
+    return pd.DataFrame(filas), anios_disp
+
 df_cal = df_act[df_act["Etapa_Cat"] == "Calificación"].copy()
-ord_sub = [
-    "   • Calificación propiamente dicha",
-    "   • Apelación (en Calificación)",
-    "   • Pend. Informe / Por Elevar / En Recepción / Otros"
-]
-t_sub_cal = generar_cuadro_carga(df_cal, "Subetapa_Cat", ord_sub, "Etapa / Sub-etapa Procesal", es_nacional, dist_sel).iloc[:-1]
-col_pct = "% Nac." if es_nacional else "% Part."
-col_tot = "Total Nacional" if es_nacional else "Total"
-t_sub_cal[col_pct] = (t_sub_cal[col_tot] / len(df_act) * 100).round(2) if len(df_act) else 0
-t_1_2_etapas = pd.concat([t_et_base.iloc[0:1], t_sub_cal, t_et_base.iloc[1:]], ignore_index=True)
+t_1_2_etapas, anios_12e = construir_df_etapas_anio(df_act)
+# Tabla 1.2.B (Carga por Unidad Orgánica, Año y Estado - Primero Trámite, luego Res. Impug.)
+def construir_df_unidad_anio(df_in):
+    if df_in.empty:
+        return pd.DataFrame(), []
+
+    df_v = df_in.copy()
+    df_v["Unidad_Exacta"] = (
+        df_v["Despacho o Unidad"]
+        .fillna("(No reconocida)")
+        .astype(str)
+        .str.strip()
+        .replace({"": "(No reconocida)", "-": "(No reconocida)", "NONE": "(No reconocida)", "NAN": "(No reconocida)", "None": "(No reconocida)", "nan": "(No reconocida)"})
+    )
+    df_v["Anio_Col"] = np.where(df_v["Anio_Num"] > 0, df_v["Anio_Num"].astype(str), "S/A")
+
+    anios_disp = sorted([a for a in df_v["Anio_Col"].unique() if a != "S/A"])
+    if "S/A" in df_v["Anio_Col"].unique():
+        anios_disp.append("S/A")
+
+    tot_gen = len(df_v)
+    unidades_ord = df_v.groupby("Unidad_Exacta").size().sort_values(ascending=False).index.tolist()
+
+    filas = []
+    for idx_u, u_nom in enumerate(unidades_ord, start=1):
+        sub_u = df_v[df_v["Unidad_Exacta"] == u_nom]
+        fila_u = {"N°": str(idx_u), "Unidad Orgánica": u_nom, "_es_total": False}
+
+        for a in anios_disp:
+            sub_ua = sub_u[sub_u["Anio_Col"] == a]
+            fila_u[f"{a} - Trámite"] = int((sub_ua["Estado_Grupo"] == "Trámite").sum())
+            fila_u[f"{a} - Res. Impug."] = int((sub_ua["Estado_Grupo"] == "Res. Impug.").sum())
+
+        u_tra = int((sub_u["Estado_Grupo"] == "Trámite").sum())
+        u_imp = int((sub_u["Estado_Grupo"] == "Res. Impug.").sum())
+        u_tot = len(sub_u)
+        fila_u["Total - Trámite"] = u_tra
+        fila_u["Total - Res. Impug."] = u_imp
+        fila_u["Total"] = u_tot
+        fila_u["%"] = round(u_tot / tot_gen * 100, 1) if tot_gen > 0 else 0.0
+        filas.append(fila_u)
+
+    fila_tot = {"N°": "", "Unidad Orgánica": "Total carga procedimental", "_es_total": True}
+    for a in anios_disp:
+        sub_a = df_v[df_v["Anio_Col"] == a]
+        fila_tot[f"{a} - Trámite"] = int((sub_a["Estado_Grupo"] == "Trámite").sum())
+        fila_tot[f"{a} - Res. Impug."] = int((sub_a["Estado_Grupo"] == "Res. Impug.").sum())
+
+    fila_tot["Total - Trámite"] = int((df_v["Estado_Grupo"] == "Trámite").sum())
+    fila_tot["Total - Res. Impug."] = int((df_v["Estado_Grupo"] == "Res. Impug.").sum())
+    fila_tot["Total"] = tot_gen
+    fila_tot["%"] = 100.0 if tot_gen > 0 else 0.0
+    filas.append(fila_tot)
+
+    return pd.DataFrame(filas), anios_disp
+
+t_1_2_unidad, anios_12u = construir_df_unidad_anio(df_act)
+# Tabla 1.2.C (Carga por Magistrado de Control, Año y Estado - Estructura 1.2.B)
+# Tabla 1.2.C (Carga por Magistrado de Control, Año y Estado - Estructura 1.2.B)
+def construir_df_magistrado_anio(df_in):
+    if df_in.empty:
+        return pd.DataFrame(), []
+
+    df_v = df_in.copy()
+    cols_mag = [c for c in df_v.columns if "magistrado" in str(c).lower()]
+    col_mag = cols_mag[0] if cols_mag else "Magistrado"
+
+    if col_mag in df_v.columns:
+        df_v["Magistrado_Exacto"] = (
+            df_v[col_mag]
+            .fillna("<SIN MAGISTRADO>")
+            .astype(str)
+            .str.strip()
+            .replace({
+                "": "<SIN MAGISTRADO>",
+                "-": "<SIN MAGISTRADO>",
+                "NONE": "<SIN MAGISTRADO>",
+                "NAN": "<SIN MAGISTRADO>",
+                "None": "<SIN MAGISTRADO>",
+                "nan": "<SIN MAGISTRADO>"
+            })
+        )
+    else:
+        df_v["Magistrado_Exacto"] = "<SIN MAGISTRADO>"
+
+    # Etiqueta especial para Palacios Bran Roberto Alejandro en A.N.C. Sede Central
+    es_palacios_anc = (
+        df_v["Es_Sede_Central"]
+        & df_v["Magistrado_Exacto"].str.upper().str.contains("PALACIOS BRAN ROBERTO ALEJANDRO", na=False)
+    )
+    df_v.loc[es_palacios_anc, "Magistrado_Exacto"] = "JEFATURA SUPREMA"
+
+    df_v["Anio_Col"] = np.where(df_v["Anio_Num"] > 0, df_v["Anio_Num"].astype(str), "S/A")
+
+    anios_disp = sorted([a for a in df_v["Anio_Col"].unique() if a != "S/A"])
+    if "S/A" in df_v["Anio_Col"].unique():
+        anios_disp.append("S/A")
+
+    tot_gen = len(df_v)
+    mags_ord = df_v.groupby("Magistrado_Exacto").size().sort_values(ascending=False).index.tolist()
+
+    filas = []
+    for idx_m, m_nom in enumerate(mags_ord, start=1):
+        sub_m = df_v[df_v["Magistrado_Exacto"] == m_nom]
+        fila_m = {"N°": str(idx_m), "Magistrado de Control": m_nom, "_es_total": False}
+
+        for a in anios_disp:
+            sub_ma = sub_m[sub_m["Anio_Col"] == a]
+            fila_m[f"{a} - Trámite"] = int((sub_ma["Estado_Grupo"] == "Trámite").sum())
+            fila_m[f"{a} - Res. Impug."] = int((sub_ma["Estado_Grupo"] == "Res. Impug.").sum())
+
+        m_tra = int((sub_m["Estado_Grupo"] == "Trámite").sum())
+        m_imp = int((sub_m["Estado_Grupo"] == "Res. Impug.").sum())
+        m_tot = len(sub_m)
+        fila_m["Total - Trámite"] = m_tra
+        fila_m["Total - Res. Impug."] = m_imp
+        fila_m["Total"] = m_tot
+        fila_m["%"] = round(m_tot / tot_gen * 100, 1) if tot_gen > 0 else 0.0
+        filas.append(fila_m)
+
+    fila_tot = {"N°": "", "Magistrado de Control": "Total carga procedimental", "_es_total": True}
+    for a in anios_disp:
+        sub_a = df_v[df_v["Anio_Col"] == a]
+        fila_tot[f"{a} - Trámite"] = int((sub_a["Estado_Grupo"] == "Trámite").sum())
+        fila_tot[f"{a} - Res. Impug."] = int((sub_a["Estado_Grupo"] == "Res. Impug.").sum())
+
+    fila_tot["Total - Trámite"] = int((df_v["Estado_Grupo"] == "Trámite").sum())
+    fila_tot["Total - Res. Impug."] = int((df_v["Estado_Grupo"] == "Res. Impug.").sum())
+    fila_tot["Total"] = tot_gen
+    fila_tot["%"] = 100.0 if tot_gen > 0 else 0.0
+    filas.append(fila_tot)
+
+    return pd.DataFrame(filas), anios_disp
+
+t_1_2_magistrado, anios_12m = construir_df_magistrado_anio(df_act)
 
 # Tabla 1.3.A (Rango de Riesgo de Expedientes Prescritos y por Prescribir) y 1.3.B (Por Etapa Procesal)
 ord_rangos = [
@@ -1615,11 +1672,12 @@ else:
 kpi_sel = st.session_state["kpi_activo"]
 
 if kpi_sel is not None:
-    if kpi_sel in ("TOTAL", "TRAMITE", "RESUELTO", "JEF_TOTAL", "JEF_TRAMITE", "JEF_RESUELTO"):
+    if kpi_sel in ("TOTAL", "TRAMITE", "RESUELTO", "NO_INVENTARIADO", "JEF_TOTAL", "JEF_TRAMITE", "JEF_RESUELTO"):
         mapa_kpis_carga = {
             "TOTAL": (f"Detalle de Carga Procesal Total — {nombre_ambito}", df_act),
             "TRAMITE": (f"Detalle de Expedientes En Trámite — {nombre_ambito}", df_tram),
             "RESUELTO": (f"Detalle de Resuelto - Impug. Tránsito — {nombre_ambito}", df_imp),
+            "NO_INVENTARIADO": (f"Detalle de Expedientes Sin Inventariar — {nombre_ambito}", df_no_inv),
             "JEF_TOTAL": (f"Detalle de Expedientes en Jefatura (Total) — {nombre_ambito}", df_jef_all),
             "JEF_TRAMITE": (f"Detalle de Jefatura En Trámite — {nombre_ambito}", df_jef_all[df_jef_all["Estado_Grupo"] == "Trámite"]),
             "JEF_RESUELTO": (f"Detalle de Jefatura Resuelto - Impugnación — {nombre_ambito}", df_jef_all[df_jef_all["Estado_Grupo"] == "Res. Impug."]),
@@ -1630,6 +1688,12 @@ if kpi_sel is not None:
         mostrar_pantalla_detalle_prod(
             df_pr_f,
             f"Detalle de Producción Acumulada — {nombre_ambito}",
+            kpi_sel
+        )
+    elif kpi_sel == "PRESC_TOTAL_VIG":
+        mostrar_pantalla_detalle_presc(
+            df_p_vigente,
+            f"Detalle de Riesgo de Prescripción (1-240d) – {nombre_ambito}",
             kpi_sel
         )
     elif kpi_sel == "PRESC_ATENCION_PREF":
@@ -1666,7 +1730,84 @@ else:
 
         st.markdown("---")
         st.subheader(f"1.2. Según ETAPAS PROCESALES y Sub-etapas de Calificación ({sub_titulo_sec})")
-        mostrar_tabla_centrada(t_1_2_etapas)
+        st.caption("CANTIDAD DE EXPEDIENTES (CAMPO NÚMERO) POR AÑO DEL EXPEDIENTE Y ESTADO: TRÁMITE = TRÁMITE · RES. IMPUG. = RESUELTO-IMPUGNACIÓN.")
+
+        if t_1_2_etapas.empty:
+            st.info("Sin registros disponibles para desagregar por etapas procesales.")
+        else:
+            th_anios_e = "".join([
+                f"<th colspan='2' style='padding:6px; border:1px solid #334155; text-align:center; color:#f8fafc;'>{a}</th>"
+                for a in anios_12e
+            ])
+            th_sub_e = "".join([
+                "<th style='padding:5px; border:1px solid #334155; text-align:center; font-size:11.5px; color:#38bdf8;'>Trámite</th>"
+                "<th style='padding:5px; border:1px solid #334155; text-align:center; font-size:11.5px; color:#f59e0b;'>Res. Impug.</th>"
+                for _ in anios_12e
+            ]) + (
+                "<th style='padding:5px; border:1px solid #334155; text-align:center; font-size:11.5px; color:#38bdf8;'>Trámite</th>"
+                "<th style='padding:5px; border:1px solid #334155; text-align:center; font-size:11.5px; color:#f59e0b;'>Res. Impug.</th>"
+            )
+
+            html_e = f"""
+            <div style="overflow-x:auto; margin-bottom:16px; border-radius:8px; border:1px solid #334155;">
+            <table style="width:100%; border-collapse:collapse; font-size:12.5px; color:#f8fafc; background:#111827; text-align:center;">
+                <thead>
+                    <tr style="background:#1e293b; border-bottom:1px solid #334155;">
+                        <th rowspan="2" style="padding:8px 6px; border:1px solid #334155; vertical-align:middle; text-align:center; width:38px;">N.º</th>
+                        <th rowspan="2" style="padding:8px 10px; border:1px solid #334155; vertical-align:middle; text-align:left;">Etapa / Sub-etapa Procesal</th>
+                        {th_anios_e}
+                        <th colspan="2" style="padding:6px; border:1px solid #334155; text-align:center; color:#f8fafc; background:#0f172a;">Total por estado</th>
+                        <th rowspan="2" style="padding:8px 8px; border:1px solid #334155; vertical-align:middle; text-align:center; background:#0f172a;">Total</th>
+                        <th rowspan="2" style="padding:8px 8px; border:1px solid #334155; vertical-align:middle; text-align:center; background:#0f172a;">%</th>
+                    </tr>
+                    <tr style="background:#1e293b; border-bottom:2px solid #475569;">
+                        {th_sub_e}
+                    </tr>
+                </thead>
+                <tbody>
+            """
+
+            cols_val_e = [c for c in t_1_2_etapas.columns if c not in ("N°", "Etapa / Sub-etapa Procesal", "_es_sub", "_es_total", "%")]
+            for idx, r in t_1_2_etapas.iterrows():
+                es_s = bool(r["_es_sub"])
+                es_t = bool(r["_es_total"])
+
+                if es_t:
+                    bg = "#1e293b"
+                    fw = "700"
+                    txt_color = "#fbbf24"
+                elif es_s:
+                    bg = "#0f172a"
+                    fw = "400"
+                    txt_color = "#cbd5e1"
+                else:
+                    bg = "#111827"
+                    fw = "600"
+                    txt_color = "#f8fafc"
+
+                celdas_num_e = ""
+                for c in cols_val_e:
+                    v = int(r[c])
+                    v_str = "–" if v == 0 else f"{v:,}"
+                    c_estilo = "color:#fbbf24;" if (es_t and c == "Total") else (f"color:{txt_color};" if v > 0 else "color:#64748b;")
+                    fw_c = "700" if (es_t or (not es_s and c == "Total")) else "400"
+                    celdas_num_e += f"<td style='padding:6px 7px; border:1px solid #1f2937; font-weight:{fw_c}; {c_estilo}'>{v_str}</td>"
+
+                pct_str = f"{r['%']:.1f} %" if not es_t else "100 %"
+                fw_pct = "700" if (es_t or not es_s) else "400"
+                pad_nom = "padding-left:24px;" if es_s else "padding-left:10px;"
+
+                html_e += (
+                    f"<tr style='background:{bg};'>"
+                    f"<td style='padding:6px; border:1px solid #1f2937; color:#94a3b8; font-weight:600;'>{r['N°']}</td>"
+                    f"<td style='padding:6px 10px; {pad_nom} border:1px solid #1f2937; text-align:left; font-weight:{fw}; color:{txt_color};'>{r['Etapa / Sub-etapa Procesal']}</td>"
+                    f"{celdas_num_e}"
+                    f"<td style='padding:6px 8px; border:1px solid #1f2937; font-weight:{fw_pct}; color:{txt_color};'>{pct_str}</td>"
+                    f"</tr>"
+                )
+
+            html_e += "</tbody></table></div>"
+            st.markdown(html_e, unsafe_allow_html=True)
 
         df_cal_otros = df_cal[df_cal["Subetapa_Cat"] == "   • Pend. Informe / Por Elevar / En Recepción / Otros"]
         if es_nacional:
@@ -1680,6 +1821,144 @@ else:
             det_s = df_cal_otros["Subetapa_Raw"].value_counts()
             if not det_s.empty:
                 st.caption(f"*Detalle Sub-etapas Calif. {dist_sel} ({det_s.sum()}): " + ", ".join([f"{k.title()} ({v})" for k, v in det_s.items()]))
+        st.markdown("---")
+        st.subheader(f"1.2.B. Carga Procesal por Unidad Orgánica, Año y Estado ({sub_titulo_sec})")
+        st.caption("CANTIDAD DE EXPEDIENTES (CAMPO NÚMERO) POR AÑO DEL EXPEDIENTE Y ESTADO: TRÁMITE = TRÁMITE · RES. IMPUG. = RESUELTO-IMPUGNACIÓN.")
+
+        if t_1_2_unidad.empty:
+            st.info("Sin registros disponibles para desagregar por unidad orgánica.")
+        else:
+            th_anios_sup = "".join([
+                f"<th colspan='2' style='padding:6px; border:1px solid #334155; text-align:center; color:#f8fafc;'>{a}</th>"
+                for a in anios_12u
+            ])
+            th_sub_cols = "".join([
+                "<th style='padding:5px; border:1px solid #334155; text-align:center; font-size:11.5px; color:#38bdf8;'>Trámite</th>"
+                "<th style='padding:5px; border:1px solid #334155; text-align:center; font-size:11.5px; color:#f59e0b;'>Res. Impug.</th>"
+                for _ in anios_12u
+            ]) + (
+                "<th style='padding:5px; border:1px solid #334155; text-align:center; font-size:11.5px; color:#38bdf8;'>Trámite</th>"
+                "<th style='padding:5px; border:1px solid #334155; text-align:center; font-size:11.5px; color:#f59e0b;'>Res. Impug.</th>"
+            )
+
+            html_u = f"""
+            <div style="overflow-x:auto; margin-bottom:16px; border-radius:8px; border:1px solid #334155;">
+            <table style="width:100%; border-collapse:collapse; font-size:12.5px; color:#f8fafc; background:#111827; text-align:center;">
+                <thead>
+                    <tr style="background:#1e293b; border-bottom:1px solid #334155;">
+                        <th rowspan="2" style="padding:8px 6px; border:1px solid #334155; vertical-align:middle; text-align:center; width:38px;">N.º</th>
+                        <th rowspan="2" style="padding:8px 10px; border:1px solid #334155; vertical-align:middle; text-align:left;">Unidad Orgánica</th>
+                        {th_anios_sup}
+                        <th colspan="2" style="padding:6px; border:1px solid #334155; text-align:center; color:#f8fafc; background:#0f172a;">Total por estado</th>
+                        <th rowspan="2" style="padding:8px 8px; border:1px solid #334155; vertical-align:middle; text-align:center; background:#0f172a;">Total</th>
+                        <th rowspan="2" style="padding:8px 8px; border:1px solid #334155; vertical-align:middle; text-align:center; background:#0f172a;">%</th>
+                    </tr>
+                    <tr style="background:#1e293b; border-bottom:2px solid #475569;">
+                        {th_sub_cols}
+                    </tr>
+                </thead>
+                <tbody>
+            """
+
+            cols_val = [c for c in t_1_2_unidad.columns if c not in ("N°", "Unidad Orgánica", "_es_total", "%")]
+            for idx, r in t_1_2_unidad.iterrows():
+                es_t = bool(r["_es_total"])
+                bg = "#1e293b" if es_t else ("#111827" if idx % 2 == 0 else "#0f172a")
+                fw = "700" if es_t else "500"
+                txt_color = "#fbbf24" if es_t else "#f8fafc"
+
+                celdas_num = ""
+                for c in cols_val:
+                    v = int(r[c])
+                    v_str = "–" if v == 0 else f"{v:,}"
+                    c_estilo = "color:#fbbf24;" if (es_t and c == "Total") else (f"color:{txt_color};" if v > 0 else "color:#64748b;")
+                    fw_c = "700" if (es_t or c == "Total") else "400"
+                    celdas_num += f"<td style='padding:6px 7px; border:1px solid #1f2937; font-weight:{fw_c}; {c_estilo}'>{v_str}</td>"
+
+                pct_str = f"{r['%']:.1f} %" if not es_t else "100 %"
+                fw_pct = "700" if es_t else "400"
+
+                html_u += (
+                    f"<tr style='background:{bg};'>"
+                    f"<td style='padding:6px; border:1px solid #1f2937; color:#94a3b8;'>{r['N°']}</td>"
+                    f"<td style='padding:6px 10px; border:1px solid #1f2937; text-align:left; font-weight:{fw}; color:{txt_color};'>{r['Unidad Orgánica']}</td>"
+                    f"{celdas_num}"
+                    f"<td style='padding:6px 8px; border:1px solid #1f2937; font-weight:{fw_pct}; color:{txt_color};'>{pct_str}</td>"
+                    f"</tr>"
+                )
+
+            html_u += "</tbody></table></div>"
+            st.markdown(html_u, unsafe_allow_html=True)
+            st.markdown("---")
+        st.subheader(f"1.2.C. Carga Procesal por Magistrado de Control, Año y Estado ({sub_titulo_sec})")
+        st.caption("CANTIDAD DE EXPEDIENTES (CAMPO NÚMERO) POR AÑO DEL EXPEDIENTE Y ESTADO: TRÁMITE = TRÁMITE · RES. IMPUG. = RESUELTO-IMPUGNACIÓN.")
+
+        if t_1_2_magistrado.empty:
+            st.info("Sin registros disponibles para desagregar por magistrado de control.")
+        else:
+            th_anios_m = "".join([
+                f"<th colspan='2' style='padding:6px; border:1px solid #334155; text-align:center; color:#f8fafc;'>{a}</th>"
+                for a in anios_12m
+            ])
+            th_sub_m = "".join([
+                "<th style='padding:5px; border:1px solid #334155; text-align:center; font-size:11.5px; color:#38bdf8;'>Trámite</th>"
+                "<th style='padding:5px; border:1px solid #334155; text-align:center; font-size:11.5px; color:#f59e0b;'>Res. Impug.</th>"
+                for _ in anios_12m
+            ]) + (
+                "<th style='padding:5px; border:1px solid #334155; text-align:center; font-size:11.5px; color:#38bdf8;'>Trámite</th>"
+                "<th style='padding:5px; border:1px solid #334155; text-align:center; font-size:11.5px; color:#f59e0b;'>Res. Impug.</th>"
+            )
+
+            html_m = f"""
+            <div style="overflow-x:auto; max-height:520px; overflow-y:auto; margin-bottom:16px; border-radius:8px; border:1px solid #334155;">
+            <table style="width:100%; border-collapse:collapse; font-size:12.5px; color:#f8fafc; background:#111827; text-align:center;">
+                <thead style="position:sticky; top:0; z-index:2;">
+                    <tr style="background:#1e293b; border-bottom:1px solid #334155;">
+                        <th rowspan="2" style="padding:8px 6px; border:1px solid #334155; vertical-align:middle; text-align:center; width:38px; background:#1e293b;">N.º</th>
+                        <th rowspan="2" style="padding:8px 10px; border:1px solid #334155; vertical-align:middle; text-align:left; background:#1e293b;">Magistrado de Control</th>
+                        {th_anios_m}
+                        <th colspan="2" style="padding:6px; border:1px solid #334155; text-align:center; color:#f8fafc; background:#0f172a;">Total por estado</th>
+                        <th rowspan="2" style="padding:8px 8px; border:1px solid #334155; vertical-align:middle; text-align:center; background:#0f172a;">Total</th>
+                        <th rowspan="2" style="padding:8px 8px; border:1px solid #334155; vertical-align:middle; text-align:center; background:#0f172a;">%</th>
+                    </tr>
+                    <tr style="background:#1e293b; border-bottom:2px solid #475569;">
+                        {th_sub_m}
+                    </tr>
+                </thead>
+                <tbody>
+            """
+
+            cols_val_m = [c for c in t_1_2_magistrado.columns if c not in ("N°", "Magistrado de Control", "_es_total", "%")]
+            for idx, r in t_1_2_magistrado.iterrows():
+                es_t = bool(r["_es_total"])
+                bg = "#1e293b" if es_t else ("#111827" if idx % 2 == 0 else "#0f172a")
+                fw = "700" if es_t else "500"
+                txt_color = "#fbbf24" if es_t else "#f8fafc"
+                sticky_tot = "position:sticky; bottom:0; z-index:2;" if es_t else ""
+
+                celdas_num_m = ""
+                for c in cols_val_m:
+                    v = int(r[c])
+                    v_str = "–" if v == 0 else f"{v:,}"
+                    c_estilo = "color:#fbbf24;" if (es_t and c == "Total") else (f"color:{txt_color};" if v > 0 else "color:#64748b;")
+                    fw_c = "700" if (es_t or c == "Total") else "400"
+                    celdas_num_m += f"<td style='padding:6px 7px; border:1px solid #1f2937; font-weight:{fw_c}; {c_estilo}'>{v_str}</td>"
+
+                pct_str = f"{r['%']:.1f} %" if not es_t else "100 %"
+                fw_pct = "700" if es_t else "400"
+
+                html_m += (
+                    f"<tr style='background:{bg}; {sticky_tot}'>"
+                    f"<td style='padding:6px; border:1px solid #1f2937; color:#94a3b8;'>{r['N°']}</td>"
+                    f"<td style='padding:6px 10px; border:1px solid #1f2937; text-align:left; font-weight:{fw}; color:{txt_color};'>{r['Magistrado de Control']}</td>"
+                    f"{celdas_num_m}"
+                    f"<td style='padding:6px 8px; border:1px solid #1f2937; font-weight:{fw_pct}; color:{txt_color};'>{pct_str}</td>"
+                    f"</tr>"
+                )
+
+            html_m += "</tbody></table></div>"
+            st.markdown(html_m, unsafe_allow_html=True)
+    
     with tab_presc:
         tot_p_sem = len(df_p_act)
         tot_p_vig = len(df_p_vigente)
@@ -1700,11 +1979,23 @@ else:
         et_top_cnt = int(etapa_top_p.iloc[0]) if not etapa_top_p.empty else 0
         base_et_pct = max(1, tot_p_vig if not df_p_vigente.empty else tot_p_sem)
         pk1, pk2, pk3, pk4 = st.columns(4)
-        pk1.metric(
-            "TOTAL RIESGO PRESC. (1-240d)",
-            f"{tot_p_vig:,} exp.",
-            f"ANC: {p_anc_vig:,} | ODANC: {p_oda_vig:,}" if es_nacional else f"Sede: {dist_sel}"
-        )
+        with pk1:
+            sub_vig = f"ANC: {p_anc_vig:,} | ODANC: {p_oda_vig:,}" if es_nacional else f"Sede: {dist_sel}"
+            if tot_p_vig > 0:
+                st.button(
+                    f"TOTAL RIESGO PRESC. (1-240d)\n**{tot_p_vig:,} exp.**\n*{sub_vig}*",
+                    key="btn_presc_total_vig",
+                    on_click=alternar_kpi,
+                    args=("PRESC_TOTAL_VIG",),
+                    use_container_width=True,
+                )
+            else:
+                st.metric(
+                    "TOTAL RIESGO PRESC. (1-240d)",
+                    "0 exp.",
+                    "Sin expedientes en riesgo",
+                    delta_color="off",
+                )
         with pk2:
             if tot_ap > 0:
                 st.button(

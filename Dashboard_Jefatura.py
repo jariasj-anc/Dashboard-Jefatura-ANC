@@ -19,13 +19,15 @@ except ImportError:
 # ==============================================================================
 MODO_DATOS = "EXCEL"  # Opciones: "EXCEL" (piloto) | "SYBASE" (tiempo real ODBC)
 
-# Fechas de corte institucionales (auditoría estática para paridad exacta):
+# Fechas de corte institucionales (modo Excel activo):
 FECHA_CORTE_CARGA = pd.Timestamp("2026-11-13")
 FECHA_CORTE_PRESC = pd.Timestamp("2026-11-14")
 
-# --- OPCIÓN DINÁMICA EN TIEMPO REAL (PARA DESPLIEGUE UTI) ---
-# FECHA_CORTE_CARGA = pd.Timestamp.today().normalize()
-# FECHA_CORTE_PRESC = pd.Timestamp.today().normalize()
+# --- OPCIÓN DINÁMICA EN TIEMPO REAL (COMENTADA HASTA DESPLIEGUE UTI) ---
+# def obtener_fechas_corte():
+#     hoy = pd.Timestamp.today().normalize()
+#     return hoy, hoy
+# FECHA_CORTE_CARGA, FECHA_CORTE_PRESC = obtener_fechas_corte()
 
 st.set_page_config(
     page_title="ANC - Análisis Estadístico Oficial (UIA)",
@@ -318,45 +320,58 @@ def formatear_detalle_exp_presc(row):
 
     return base_exp if base_exp else "-"
 
+def obtener_nombre_unidad_por_sigla(enc, es_sc=False):
+    s = norm_txt(enc)
+    if "JEFATURA" in s:
+        return "JEFATURA-ANC" if es_sc else "JEFATURA DE ODANC"
+    if "-CII" in s or "INTERVENCION INMEDIATA" in s:
+        return "COMISIÓN DE INTERVENCIÓN INMEDIATA"
+    if "-OCCPC" in s or "CONTROL PREVENTIVO" in s:
+        return "OFICINA CENTRAL DE CONTROL PREVENTIVO Y CONCURRENTE"
+    if "-OCPAD" in s:
+        return "OFICINA CENTRAL DE PROCEDIMIENTO ADMINISTRATIVO DISCIPLINARIO"
+    # Unidades Descentralizadas (ODANC)
+    if "-UDCIP" in s:
+        return "UNIDAD DESCENTRALIZADA DE CALIFICACIÓN E INVESTIGACIÓN PRELIMINAR"
+    if "-UDPSI" in s:
+        return "UNIDAD DESCENTRALIZADA DE PREVENCIÓN, SUPERVISIÓN E INSPECCIÓN"
+    if "-UDPAD" in s:
+        return "UNIDAD DESCENTRALIZADA DE PROCEDIMIENTO ADMINISTRATIVO DISCIPLINARIO"
+    if "-UDSAP" in s:
+        return "UNIDAD DESCENTRALIZADA DE SANCIÓN Y APELACIÓN"
+    # Unidades Centrales (ANC Sede Central)
+    if "-UCIP" in s or "CALIFICACION" in s:
+        return "UNIDAD DE CALIFICACIÓN E INVESTIGACIÓN PRELIMINAR" if es_sc else "UNIDAD DESCENTRALIZADA DE CALIFICACIÓN E INVESTIGACIÓN PRELIMINAR"
+    if "-UPSI" in s or "PREVENCION" in s or "SUPERVISION" in s:
+        return "UNIDAD DE PREVENCIÓN, SUPERVISIÓN E INSPECCIÓN" if es_sc else "UNIDAD DESCENTRALIZADA DE PREVENCIÓN, SUPERVISIÓN E INSPECCIÓN"
+    if "-UPAD" in s or "PROCEDIMIENTO" in s:
+        return "UNIDAD DE PROCEDIMIENTO ADMINISTRATIVO DISCIPLINARIO" if es_sc else "UNIDAD DESCENTRALIZADA DE PROCEDIMIENTO ADMINISTRATIVO DISCIPLINARIO"
+    if "-USAP" in s or "SANCION" in s or "APELACION" in s:
+        return "UNIDAD DE SANCIÓN Y APELACIÓN" if es_sc else "UNIDAD DESCENTRALIZADA DE SANCIÓN Y APELACIÓN"
+    return "OTROS / ESPECIALIZADOS"
+
 def map_unidad_produccion(row):
-    s = norm_txt(row.get("ENCARGADO", ""))
-    if row.get("Es_Sede_Central", False):
-        if "JEFATURA" in s:
-            return "JEFATURA ANC"
-        m = re.search(r'-(UCIP|UPAD|USAP|OCPAD|UPSI|CII|OCCPC) ', s)
-        return m.group(1) if m else (s if s else "NO ESPECIFICADO")
-    else:
-        if "JEFATURA" in s:
-            return "Jefatura ODANC"
-        if any(k in s for k in ("CALIFICACION", "UDCIP", "UCIP", "CALIF")):
-            return "Calificación e Inv. Preliminar (UDCIP/UCIP)"
-        if any(k in s for k in ("PROCEDIMIENTO", "UDPAD", "UPAD", "OCPAD", "PAD", "DISCIPLINARIO", "INSTRUCCION")):
-            return "Procedimiento Adm. Disciplinario (UDPAD/UPAD)"
-        if any(k in s for k in ("SANCION", "APELACION", "UDSAP", "USAP")):
-            return "Sanción y Apelación (UDSAP/USAP)"
-        if any(k in s for k in ("PREVENCION", "SUPERVISION", "INSPECCION", "UPSI", "UDPSI")):
-            return "Prevención, Supervisión e Inspección (UDPSI/UPSI)"
-        if "INTERVENCION INMEDIATA" in s or "-CII" in s:
-            return "Comisión de Intervención Inmediata (CII)"
-        return "Otros / Especializados"
+    return obtener_nombre_unidad_por_sigla(row.get("ENCARGADO", ""), bool(row.get("Es_Sede_Central", False)))
 
 def map_unidad_todos(enc):
     s = norm_txt(enc)
     if "JEFATURA" in s:
-        return "Jefatura (ANC / ODANC)"
-    if any(k in s for k in ("CALIFICACION", "UDCIP", "UCIP", "CALIF")):
-        return "Calificación e Inv. Preliminar (UCIP / UDCIP)"
-    if any(k in s for k in ("PROCEDIMIENTO", "UDPAD", "UPAD", "OCPAD", "PAD", "DISCIPLINARIO", "INSTRUCCION")):
-        return "Procedimiento Adm. Disciplinario (UPAD / OCPAD / UDPAD)"
-    if any(k in s for k in ("SANCION", "APELACION", "UDSAP", "USAP")):
-        return "Sanción y Apelación (USAP / UDSAP)"
-    if any(k in s for k in ("PREVENCION", "SUPERVISION", "INSPECCION", "UPSI", "UDPSI")):
-        return "Prevención, Supervisión e Inspección (UPSI / UDPSI)"
-    if "OCCPC" in s or "CONTROL PREVENTIVO" in s:
-        return "Control Preventivo y Concurrente (OCCPC)"
-    if "INTERVENCION INMEDIATA" in s or "-CII" in s:
-        return "Comisión de Intervención Inmediata (CII)"
-    return "Otros / Especializados"
+        return "JEFATURA (ANC / ODANC)"
+    if "-CII" in s or "INTERVENCION INMEDIATA" in s:
+        return "COMISIÓN DE INTERVENCIÓN INMEDIATA"
+    if "-OCCPC" in s or "CONTROL PREVENTIVO" in s:
+        return "OFICINA CENTRAL DE CONTROL PREVENTIVO Y CONCURRENTE"
+    if "-OCPAD" in s:
+        return "OFICINA CENTRAL DE PROCEDIMIENTO ADMINISTRATIVO DISCIPLINARIO"
+    if "-UDCIP" in s or "-UCIP" in s or "CALIFICACION" in s:
+        return "UNIDAD DE CALIFICACIÓN E INVESTIGACIÓN PRELIMINAR (UCIP / UDCIP)"
+    if "-UDPSI" in s or "-UPSI" in s or "PREVENCION" in s or "SUPERVISION" in s:
+        return "UNIDAD DE PREVENCIÓN, SUPERVISIÓN E INSPECCIÓN (UPSI / UDPSI)"
+    if "-UDPAD" in s or "-UPAD" in s or "PROCEDIMIENTO" in s:
+        return "UNIDAD DE PROCEDIMIENTO ADMINISTRATIVO DISCIPLINARIO (UPAD / UDPAD)"
+    if "-UDSAP" in s or "-USAP" in s or "SANCION" in s or "APELACION" in s:
+        return "UNIDAD DE SANCIÓN Y APELACIÓN (USAP / UDSAP)"
+    return "OTROS / ESPECIALIZADOS"
 
 def map_magistrado_produccion(row):
     mag = str(row.get("MAGISTRADO", "")).strip().upper()
@@ -368,6 +383,8 @@ def map_magistrado_produccion(row):
     return mag
 
 def estandarizar_tablas(df_c_raw, df_p_raw, df_pr_raw):
+    fecha_corte_carga, fecha_corte_presc = FECHA_CORTE_CARGA, FECHA_CORTE_PRESC
+    # fecha_corte_carga, fecha_corte_presc = obtener_fechas_corte()  # Tiempo real (comentado)
     # A. CARGA ACTUAL
     df_c_orig = limpiar_columnas(df_c_raw.copy())
     mask_no_inv_global = df_c_orig.apply(
@@ -408,7 +425,7 @@ def estandarizar_tablas(df_c_raw, df_p_raw, df_pr_raw):
     df_c["Anio_Num"] = pd.to_numeric(df_c["Año"], errors="coerce").fillna(0).astype(int)
 
     df_c["Fecha_Creacion_Dt"] = pd.to_datetime(df_c["Fecha creación. Exp."], errors="coerce", dayfirst=True).dt.normalize()
-    df_c["Antiguedad_Dias"] = (FECHA_CORTE_CARGA - df_c["Fecha_Creacion_Dt"]).dt.days
+    df_c["Antiguedad_Dias"] = (fecha_corte_carga - df_c["Fecha_Creacion_Dt"]).dt.days
     df_c["Antiguedad_Anios"] = (df_c["Antiguedad_Dias"] / 365.25).round(2)
 
     for col_f in ["Fecha creación. Exp.", "Fecha Envio/Recep. Despacho"]:
@@ -465,15 +482,17 @@ def estandarizar_tablas(df_c_raw, df_p_raw, df_pr_raw):
     col_mag_p = encontrar_columna(df_p, ["MAGISTRADO"])
     df_p["MAGISTRADO"] = df_p[col_mag_p].fillna("-") if col_mag_p else "-"
 
-    df_p["Dias_Calc"] = (df_p["Fecha_Presc_Dt"] - FECHA_CORTE_PRESC).dt.days
+    df_p["Dias_Calc"] = (df_p["Fecha_Presc_Dt"] - fecha_corte_presc).dt.days
     df_p["Rango_Presc"] = df_p["Dias_Calc"].apply(clasificar_presc_rango)
     df_p = df_p[df_p["Rango_Presc"].notna()].copy()
 
+    
     # C. PRODUCCIÓN MENSUAL
     df_pr = limpiar_columnas(df_pr_raw.copy())
     cols_pr_ok = [
         c for c in [
             "Distrito Actual", "EXPEDIENTE", "ENCARGADO", "MAGISTRADO",
+            "USUARIO DESCARGO PROYECTO",
             "INFORME", "RESOLUCIÓN", "FECHA_DESCARGA",
             "DETALLE DEL TIPO DE PRONUNCIAMIENTO", "TIPO DE AUTO"
         ] if c in df_pr.columns
@@ -498,7 +517,17 @@ def estandarizar_tablas(df_c_raw, df_p_raw, df_pr_raw):
         df_pr["Magistrado_Prod"] = df_pr.apply(map_magistrado_produccion, axis=1)
     else:
         df_pr["Magistrado_Prod"] = "NO ESPECIFICADO"
-
+    if "USUARIO DESCARGO PROYECTO" in df_pr.columns:
+        df_pr["Asistente_Prod"] = (
+            df_pr["USUARIO DESCARGO PROYECTO"]
+            .fillna("NO ESPECIFICADO")
+            .astype(str)
+            .str.strip()
+            .str.upper()
+            .replace({"": "NO ESPECIFICADO", "-": "NO ESPECIFICADO", "NAN": "NO ESPECIFICADO", "NONE": "NO ESPECIFICADO"})
+        )
+    else:
+        df_pr["Asistente_Prod"] = "NO ESPECIFICADO"
     return df_c, df_p, df_pr
 
 # ==============================================================================
@@ -517,34 +546,42 @@ def cargar_desde_excel(file_bytes):
         pd.read_excel(xls, sheet_name=h_prod)
     )
 
-@st.cache_data(ttl=300, show_spinner="Consultando base de datos Sybase en tiempo real...")
-def cargar_desde_sybase():
-    if pyodbc is None:
-        st.error("La librería pyodbc no está instalada. Ejecuta: pip install pyodbc")
-        st.stop()
-    conn_str = (
-        f"DRIVER={{Adaptive Server Enterprise}};"
-        f"SERVER={os.getenv('SYBASE_HOST', 'IP_SERVIDOR_SYBASE')};"
-        f"PORT={os.getenv('SYBASE_PORT', '5000')};"
-        f"DATABASE={os.getenv('SYBASE_DB', 'BD_ANC')};"
-        f"UID={os.getenv('SYBASE_USER', 'USUARIO_SOLO_LECTURA')};"
-        f"PWD={os.getenv('SYBASE_PASS', 'CLAVE_SEGURA')};"
-    )
-    with pyodbc.connect(conn_str) as conn:
-        df_c_sql = pd.read_sql("SELECT * FROM vw_anc_carga_actual", conn)
-        df_p_sql = pd.read_sql("SELECT * FROM vw_anc_prescripciones", conn)
-        df_pr_sql = pd.read_sql("SELECT * FROM vw_anc_produccion", conn)
-    return estandarizar_tablas(df_c_sql, df_p_sql, df_pr_sql)
+# --- CONECTOR SYBASE ODBC EN TIEMPO REAL (COMENTADO HASTA ACTIVACIÓN UTI) ---
+# @st.cache_data(ttl=300, show_spinner="Consultando base de datos Sybase en tiempo real...")
+# def cargar_desde_sybase():
+#     if pyodbc is None:
+#         st.error("La librería pyodbc no está instalada. Ejecuta: pip install pyodbc")
+#         st.stop()
+#     cfg = st.secrets["sybase"] if "sybase" in st.secrets else {}
+#     driver = cfg.get("driver", os.getenv("SYBASE_DRIVER", "Adaptive Server Enterprise"))
+#     host = cfg.get("host", os.getenv("SYBASE_HOST", ""))
+#     port = cfg.get("port", os.getenv("SYBASE_PORT", "5000"))
+#     db = cfg.get("database", os.getenv("SYBASE_DB", "BD_ANC"))
+#     user = cfg.get("user", os.getenv("SYBASE_USER", ""))
+#     pwd = cfg.get("password", os.getenv("SYBASE_PASS", ""))
+#     conn_str = (
+#         f"DRIVER={{{driver}}};"
+#         f"SERVER={host};"
+#         f"PORT={port};"
+#         f"DATABASE={db};"
+#         f"UID={user};"
+#         f"PWD={pwd};"
+#     )
+#     with pyodbc.connect(conn_str, timeout=15) as conn:
+#         df_c_sql = pd.read_sql("SELECT * FROM vw_anc_carga_actual", conn)
+#         df_p_sql = pd.read_sql("SELECT * FROM vw_anc_prescripciones", conn)
+#         df_pr_sql = pd.read_sql("SELECT * FROM vw_anc_produccion", conn)
+#     return estandarizar_tablas(df_c_sql, df_p_sql, df_pr_sql)
 
-if MODO_DATOS == "EXCEL":
-    archivos_excel = [f for f in glob.glob("*.xlsx") if not os.path.basename(f).startswith("~$")]
-    if not archivos_excel:
-        st.error("No se encontró ningún archivo Excel (.xlsx) en el directorio.")
-        st.stop()
-    with open(archivos_excel[0], "rb") as f:
-        df_carga, df_presc, df_prod = cargar_desde_excel(f.read())
-else:
-    df_carga, df_presc, df_prod = cargar_desde_sybase()
+archivos_excel = [f for f in glob.glob("*.xlsx") if not os.path.basename(f).startswith("~$")]
+if not archivos_excel:
+    st.error("No se encontró ningún archivo Excel (.xlsx) en el directorio.")
+    st.stop()
+with open(archivos_excel[0], "rb") as f:
+    df_carga, df_presc, df_prod = cargar_desde_excel(f.read())
+
+# if MODO_DATOS == "SYBASE":
+#     df_carga, df_presc, df_prod = cargar_desde_sybase()
 
 # ==============================================================================
 # 6. UTILIDADES DE EXPORTACIÓN Y RENDERIZADO DE TABLAS / TARJETAS
@@ -731,6 +768,42 @@ with st.sidebar:
     st.subheader("🎯 Filtro por Sede / ODANC")
     dist_sel = st.selectbox("Visualizar:", opciones_filtro, index=1)
 
+    st.markdown("---")
+    st.subheader("🧭 Módulos de Análisis")
+
+    if "modulo_activo" not in st.session_state:
+        st.session_state["modulo_activo"] = "CARGA"
+
+    def cambiar_modulo(mod):
+        st.session_state["modulo_activo"] = mod
+        st.session_state["kpi_activo"] = None
+
+    st.button(
+        "📊 1. Carga Procesal Actual",
+        key="nav_btn_carga",
+        type="primary" if st.session_state["modulo_activo"] == "CARGA" else "secondary",
+        on_click=cambiar_modulo,
+        args=("CARGA",),
+        use_container_width=True
+    )
+    st.button(
+        "⏳ 2. Riesgo de Prescripción",
+        key="nav_btn_presc",
+        type="primary" if st.session_state["modulo_activo"] == "PRESC" else "secondary",
+        on_click=cambiar_modulo,
+        args=("PRESC",),
+        use_container_width=True
+    )
+    st.button(
+        "⚖️ 3. Producción Mensual",
+        key="nav_btn_prod",
+        type="primary" if st.session_state["modulo_activo"] == "PROD" else "secondary",
+        on_click=cambiar_modulo,
+        args=("PROD",),
+        use_container_width=True
+    )
+    st.markdown("---")
+
 es_nacional = (dist_sel == "TODOS")
 nombre_ambito = "TODOS (ANC SEDE CENTRAL + 34 ODANCs)" if es_nacional else dist_sel
 sub_titulo_sec = "ANC vs. ODANC" if es_nacional else dist_sel
@@ -760,8 +833,8 @@ df_c_sede["Despacho_Clean"] = df_c_sede["Despacho o Unidad"].fillna("-").astype(
 df_c_sede["Subetapa_Clean"] = df_c_sede["Subetapa_Raw"].fillna("-").astype(str).str.strip()
 
 df_no_inv = df_c_sede[df_c_sede["Es_No_Inventariado"]].copy()
-df_tram_sede = df_c_sede[(~df_c_sede["Es_No_Inventariado"]) & (df_c_sede["Estado_Norm"] == "TRAMITE")].copy()
-df_imp_sede = df_c_sede[(~df_c_sede["Es_No_Inventariado"]) & (df_c_sede["Estado_Norm"].str.contains("RESUELTO|IMPUGNACION", na=False))].copy()
+df_tram_sede = df_c_sede[df_c_sede["Estado_Norm"] == "TRAMITE"].copy()
+df_imp_sede = df_c_sede[df_c_sede["Estado_Norm"].str.contains("RESUELTO|IMPUGNACION", na=False)].copy()
 
 df_act_sede = pd.concat([df_tram_sede, df_imp_sede], ignore_index=True)
 df_act_sede["Estado_Grupo"] = np.where(df_act_sede["Estado_Norm"] == "TRAMITE", "Trámite", "Res. Impug.")
@@ -932,7 +1005,75 @@ def generar_cuadro_produccion_mes_actual(df_mes_act, col_grupo, label_col, nombr
         "% Part.": 100.0 if tot_gen > 0 else 0.0
     }
     return pd.concat([res, pd.DataFrame([fila_tot])], ignore_index=True)
+def generar_cuadro_jerarquico_asistentes(df_mes_act, titulo_total="TOTAL GENERAL"):
+    if df_mes_act.empty:
+        return pd.DataFrame()
 
+    total_global = len(df_mes_act)
+    orden_mags = (
+        df_mes_act.groupby("Magistrado_Prod")
+        .size()
+        .sort_values(ascending=False)
+        .index.tolist()
+    )
+
+    filas = []
+    tot_res_glob = 0
+    tot_inf_glob = 0
+
+    for idx_m, mag in enumerate(orden_mags, start=1):
+        sub_m = df_mes_act[df_mes_act["Magistrado_Prod"] == mag]
+        tot_m = len(sub_m)
+        inf_m = int(sub_m["Es_Informe"].sum())
+        res_m = int(tot_m - inf_m)
+        pct_glob_m = (tot_m / total_global * 100.0) if total_global > 0 else 0.0
+
+        tot_res_glob += res_m
+        tot_inf_glob += inf_m
+
+        filas.append({
+            "Magistrado / Despacho → Asistente Judicial": f"🏛️ {idx_m}. {mag}",
+            "Resoluciones": res_m,
+            "Informes": inf_m,
+            "Total": tot_m,
+            "% Despacho": "100.00%",
+            "% Total": f"{pct_glob_m:.2f}%"
+        })
+
+        g_asist = (
+            sub_m.groupby("Asistente_Prod")
+            .agg(Total=("Es_Informe", "size"), Informes=("Es_Informe", "sum"))
+            .reset_index()
+        )
+        g_asist["Resoluciones"] = g_asist["Total"] - g_asist["Informes"]
+        g_asist = g_asist.sort_values(by=["Total", "Resoluciones"], ascending=[False, False])
+
+        for _, r_a in g_asist.iterrows():
+            tot_a = int(r_a["Total"])
+            res_a = int(r_a["Resoluciones"])
+            inf_a = int(r_a["Informes"])
+            pct_desp_a = (tot_a / tot_m * 100.0) if tot_m > 0 else 0.0
+            pct_glob_a = (tot_a / total_global * 100.0) if total_global > 0 else 0.0
+
+            filas.append({
+                "Magistrado / Despacho → Asistente Judicial": f"    ↳ {r_a['Asistente_Prod']}",
+                "Resoluciones": res_a,
+                "Informes": inf_a,
+                "Total": tot_a,
+                "% Despacho": f"{pct_desp_a:.2f}%",
+                "% Total": f"{pct_glob_a:.2f}%"
+            })
+
+    filas.append({
+        "Magistrado / Despacho → Asistente Judicial": titulo_total,
+        "Resoluciones": tot_res_glob,
+        "Informes": tot_inf_glob,
+        "Total": total_global,
+        "% Despacho": "—",
+        "% Total": "100.00%"
+    })
+
+    return pd.DataFrame(filas)
 # Cuadros de Prescripción
 etiquetas_rangos_color = [f"{emoji} {clave_rg}" for _, clave_rg, _, _, _, emoji in CONFIG_COLORES_RANGOS]
 if es_nacional:
@@ -1405,16 +1546,11 @@ if kpi_sel is not None:
         tit_p, df_p_sub = mapa_kpis_presc[kpi_sel]
         mostrar_pantalla_detalle_presc(df_p_sub, tit_p, kpi_sel)
 else:
-    tab_carga, tab_presc, tab_prod = st.tabs([
-        "📊 1. Carga Procesal Integral (Etapas, Sub-etapas y Jefatura)",
-        "⏳ 2. Riesgo de Prescripción",
-        "⚖️ 3. Producción Mensual y Pronunciamientos"
-    ])
-
     # --------------------------------------------------------------------------
     # PESTAÑA 1: CARGA PROCESAL INTEGRAL (CUADRO + GRÁFICO ESPECIALIZADO)
     # --------------------------------------------------------------------------
-    with tab_carga:
+    mod_actual = st.session_state.get("modulo_activo", "CARGA")
+    if mod_actual == "CARGA":
         # Base combinada para que los selectboxes incluyan valores tanto de Inventariados como de Sin Inventariar
         df_base_opciones = pd.concat([df_act_sede, df_no_inv], ignore_index=True)
 
@@ -1976,9 +2112,89 @@ else:
                 )
                 st.plotly_chart(fig_1_4_m, use_container_width=True)
     # --------------------------------------------------------------------------
-    # PESTAÑA 2: RIESGO DE PRESCRIPCIÓN (+ MAPA DE CALOR Y PARETO)
+    # PESTAÑA 2: RIESGO DE PRESCRIPCIÓN (CADA CUADRO CON SU GRÁFICO ASOCIADO)
     # --------------------------------------------------------------------------
-    with tab_presc:
+    
+    elif mod_actual == "PRESC":
+        fp1, fp2, fp3 = st.columns([1.1, 1.2, 1.5])
+        with fp1:
+            opts_et_p = ["Todos"] + [e for e in ORDEN_ETAPAS if e in df_p_act["Etapa_Presc_Cat"].unique()]
+            sel_et_p = st.selectbox("Filtrar por Etapa Procesal:", opts_et_p, key="filt_p_etapa")
+        with fp2:
+            opts_rg_p = ["Todos"] + list(ORDEN_RANGOS_PRESC)
+            sel_rg_p = st.selectbox("Filtrar por Tramo de Riesgo:", opts_rg_p, key="filt_p_rango")
+        with fp3:
+            opts_mg_p = ["Todos"] + sorted([str(m).strip() for m in df_p_act["MAGISTRADO"].dropna().unique() if str(m).strip() not in ("", "nan", "None")])
+            sel_mg_p = st.selectbox("Filtrar por Magistrado:", opts_mg_p, key="filt_p_mag")
+
+        if sel_et_p != "Todos":
+            df_p_act = df_p_act[df_p_act["Etapa_Presc_Cat"] == sel_et_p]
+            df_p_vigente = df_p_vigente[df_p_vigente["Etapa_Presc_Cat"] == sel_et_p]
+            df_p_atencion_pref = df_p_atencion_pref[df_p_atencion_pref["Etapa_Presc_Cat"] == sel_et_p]
+        if sel_rg_p != "Todos":
+            df_p_act = df_p_act[df_p_act["Rango_Presc"] == sel_rg_p]
+            df_p_vigente = df_p_vigente[df_p_vigente["Rango_Presc"] == sel_rg_p]
+            df_p_atencion_pref = df_p_atencion_pref[df_p_atencion_pref["Rango_Presc"] == sel_rg_p]
+        if sel_mg_p != "Todos":
+            df_p_act = df_p_act[df_p_act["MAGISTRADO"].astype(str).str.strip() == sel_mg_p]
+            df_p_vigente = df_p_vigente[df_p_vigente["MAGISTRADO"].astype(str).str.strip() == sel_mg_p]
+            df_p_atencion_pref = df_p_atencion_pref[df_p_atencion_pref["MAGISTRADO"].astype(str).str.strip() == sel_mg_p]
+
+        # Recalcular Cuadros 2.1 y 2.2 con los filtros dinámicos aplicados
+        if es_nacional:
+            p_anc_s = df_p_act[df_p_act["Es_Sede_Central"]].groupby("Rango_Presc").size().reindex(ORDEN_RANGOS_PRESC, fill_value=0)
+            p_oda_s = df_p_act[~df_p_act["Es_Sede_Central"]].groupby("Rango_Presc").size().reindex(ORDEN_RANGOS_PRESC, fill_value=0)
+            t_2_1_presc = pd.DataFrame({
+                "Rango de Riesgo de Expedientes Prescritos y por Prescribir": etiquetas_rangos_color,
+                "ANC Sede Central": p_anc_s.values,
+                "% en ANC": (p_anc_s.values / p_anc_s.sum() * 100).round(2) if p_anc_s.sum() else 0,
+                "ODANCs (34 Dist.)": p_oda_s.values,
+                "% en ODANC": (p_oda_s.values / p_oda_s.sum() * 100).round(2) if p_oda_s.sum() else 0,
+                "Total Nacional": p_anc_s.values + p_oda_s.values
+            })
+            tot_p_nac = t_2_1_presc["Total Nacional"].sum()
+            t_2_1_presc["% Nac."] = (t_2_1_presc["Total Nacional"] / tot_p_nac * 100).round(2) if tot_p_nac else 0
+            fila_tot_p = pd.DataFrame([{
+                "Rango de Riesgo de Expedientes Prescritos y por Prescribir": "TOTAL PRESCRIPCIONES",
+                "ANC Sede Central": int(p_anc_s.sum()), "% en ANC": 100.0 if p_anc_s.sum() else 0.0,
+                "ODANCs (34 Dist.)": int(p_oda_s.sum()), "% en ODANC": 100.0 if p_oda_s.sum() else 0.0,
+                "Total Nacional": int(tot_p_nac), "% Nac.": 100.0 if tot_p_nac else 0.0
+            }])
+            t_2_1_presc = pd.concat([t_2_1_presc, fila_tot_p], ignore_index=True)
+        else:
+            p_sede_s = df_p_act.groupby("Rango_Presc").size().reindex(ORDEN_RANGOS_PRESC, fill_value=0)
+            tot_p_s = p_sede_s.sum()
+            t_2_1_presc = pd.DataFrame({
+                "Rango de Riesgo de Expedientes Prescritos y por Prescribir": etiquetas_rangos_color,
+                "Expedientes": p_sede_s.values,
+                "% Part.": (p_sede_s.values / tot_p_s * 100).round(2) if tot_p_s else 0
+            })
+            fila_tot_p = pd.DataFrame([{
+                "Rango de Riesgo de Expedientes Prescritos y por Prescribir": f"TOTAL PRESCRIPCIONES {dist_sel}",
+                "Expedientes": int(tot_p_s), "% Part.": 100.0 if tot_p_s else 0.0
+            }])
+            t_2_1_presc = pd.concat([t_2_1_presc, fila_tot_p], ignore_index=True)
+
+        ct_et_rg = pd.crosstab(df_p_act["Etapa_Presc_Cat"], df_p_act["Rango_Presc"]).reindex(index=ORDEN_ETAPAS, columns=ORDEN_RANGOS_PRESC, fill_value=0)
+        t_2_2_et = pd.DataFrame(index=ORDEN_ETAPAS)
+        t_2_2_et["🔴 Prescritos (<=0d)"] = ct_et_rg["Prescritos (<= 0 días)"]
+        t_2_2_et["🟡 Crítico (1-15d)"] = ct_et_rg["Crítico: De 1 a 15 días"]
+        t_2_2_et["🟢 Alto (16-30d)"] = ct_et_rg["Alto: De 16 a 30 días"]
+        t_2_2_et["🔵 Moderado (31-60d)"] = ct_et_rg["Moderado: De 31 a 60 días"]
+        t_2_2_et["🔵 Preventivo (61-90d)"] = ct_et_rg["Preventivo: De 61 a 90 días"]
+        t_2_2_et["🟣 Monitoreo (91-240d)"] = ct_et_rg["Monitoreo: De 91 a 240 días"]
+        t_2_2_et["Total"] = t_2_2_et.sum(axis=1)
+        tot_et_p_gen = int(t_2_2_et["Total"].sum())
+        t_2_2_et["% Part."] = (t_2_2_et["Total"] / tot_et_p_gen * 100).round(2) if tot_et_p_gen > 0 else 0.0
+        t_2_2_et = t_2_2_et.reset_index().rename(columns={"index": "Etapa Procesal"})
+        fila_tot_22et = {
+            "Etapa Procesal": "TOTAL POR ETAPA PROCESAL",
+            **{c: int(t_2_2_et[c].sum()) for c in t_2_2_et.columns if c not in ("Etapa Procesal", "% Part.")},
+            "% Part.": 100.0 if tot_et_p_gen > 0 else 0.0
+        }
+        t_2_2_et = pd.concat([t_2_2_et, pd.DataFrame([fila_tot_22et])], ignore_index=True)
+
+        # KPIs Superiores de Prescripción
         tot_p_sem = len(df_p_act)
         tot_p_vig = len(df_p_vigente)
         p_anc_vig = int(df_p_vigente["Es_Sede_Central"].sum())
@@ -2029,135 +2245,722 @@ else:
             with col_s:
                 st.button(f"{emoji} {titulo_rg}\n**{val_s:,} exp.**\n*{rango_txt} ({pct_s:.2f}%)*", key=f"btn_{cod_k}", on_click=alternar_kpi, args=(cod_k,), use_container_width=True)
 
-        if not df_p_act.empty:
-            gp1, gp2 = st.columns(2)
-            with gp1:
-                hm_data = pd.crosstab(df_p_act["Etapa_Presc_Cat"], df_p_act["Rango_Presc"]).reindex(index=ORDEN_ETAPAS, columns=ORDEN_RANGOS_PRESC, fill_value=0)
-                hm_data.index = [ETAPAS_CORTAS[e] for e in ORDEN_ETAPAS]
-                hm_data.columns = ["Presc (<=0d)", "Crítico (1-15d)", "Alto (16-30d)", "Moderado (31-60d)", "Prev. (61-90d)", "Monit. (91-240d)"]
-                fig_hm = px.imshow(
-                    hm_data, text_auto=True, aspect="auto", color_continuous_scale="YlOrRd",
-                    title="Mapa de Calor: Riesgo por Etapa Procesal y Plazo",
-                    labels=dict(x="Rango de Riesgo", y="", color="Exp.")
-                )
-                fig_hm.update_layout(template="plotly_dark", paper_bgcolor="#111827", height=360, margin=dict(l=15, r=15, t=45, b=20))
-                st.plotly_chart(fig_hm, use_container_width=True)
+        st.markdown("---")
 
-            with gp2:
-                pareto_s = df_p_act["Distrito_Norm"].value_counts().head(12) if es_nacional else df_p_act["Etapa_Presc_Cat"].map(ETAPAS_CORTAS).value_counts()
-                if not es_nacional:
-                    pareto_s = pareto_s[pareto_s > 0].sort_values(ascending=False)
-                titulo_par = "Concentración de Riesgo (Pareto 80/20): Top 12 Sedes" if es_nacional else f"Concentración de Riesgo por Etapa — {dist_sel}"
-                df_par = pd.DataFrame({"Categoria": [x.title() for x in pareto_s.index], "Expedientes": pareto_s.values})
-                df_par["Acum_Pct"] = (df_par["Expedientes"].cumsum() / max(1, len(df_p_act)) * 100).round(1)
-
-                fig_par = go.Figure()
-                fig_par.add_trace(go.Bar(
-                    x=df_par["Categoria"], y=df_par["Expedientes"], name="Expedientes",
-                    marker_color="#3b82f6", text=df_par["Expedientes"], textposition="outside",
-                    textfont=dict(color="#f8fafc", size=11)
-                ))
-                fig_par.add_trace(go.Scatter(x=df_par["Categoria"], y=df_par["Acum_Pct"], name="% Acumulado", yaxis="y2", mode="lines+markers", line=dict(color="#f59e0b", width=3)))
-                fig_par.add_hline(y=80, yref="y2", line_dash="dash", line_color="#ef4444", annotation_text="80% del Riesgo", annotation_position="top left")
-                fig_par.update_layout(
-                    title=titulo_par, template="plotly_dark", paper_bgcolor="#111827", plot_bgcolor="#0f172a",
-                    yaxis=dict(title="Expedientes", range=[0, max(1, df_par["Expedientes"].max()) * 1.18]),
-                    yaxis2=dict(title="% Acumulado", overlaying="y", side="right", range=[0, 108]),
-                    legend=dict(orientation="h", y=1.12), height=360, margin=dict(l=15, r=15, t=55, b=35)
-                )
-                st.plotly_chart(fig_par, use_container_width=True)
-
-        st.subheader(f"2.1. Rango de Riesgo de Expedientes Prescritos y por Prescribir ({sub_titulo_sec})")
+        # ======================================================================
+        # BLOQUE 2.1: RANGO DE RIESGO + GRÁFICO PARETO 80/20
+        # ======================================================================
+        st.subheader(f"2.1. Riesgo de Expedientes Prescritos y por Prescribir ({sub_titulo_sec})")
         mostrar_tabla_centrada(t_2_1_presc)
 
+        if not df_p_act.empty:
+            pareto_s = df_p_act["Distrito_Norm"].value_counts().head(12) if es_nacional else df_p_act["Rango_Presc"].value_counts().reindex(ORDEN_RANGOS_PRESC, fill_value=0)
+            if not es_nacional:
+                pareto_s = pareto_s[pareto_s > 0].sort_values(ascending=False)
+            titulo_par = "Gráfico 2.1 — Concentración de Riesgo (Pareto 80/20): Top 12 Sedes" if es_nacional else f"Gráfico 2.1 — Concentración de Riesgo por Plazo (Pareto 80/20) — {dist_sel}"
+            df_par = pd.DataFrame({"Categoria": [x.title() if es_nacional else x for x in pareto_s.index], "Expedientes": pareto_s.values})
+            df_par["Acum_Pct"] = (df_par["Expedientes"].cumsum() / max(1, len(df_p_act)) * 100).round(1)
+
+            fig_par = go.Figure()
+            fig_par.add_trace(go.Bar(
+                x=df_par["Categoria"], y=df_par["Expedientes"], name="Expedientes",
+                marker_color="#3b82f6", text=df_par["Expedientes"], textposition="outside",
+                textfont=dict(color="#f8fafc", size=11)
+            ))
+            fig_par.add_trace(go.Scatter(x=df_par["Categoria"], y=df_par["Acum_Pct"], name="% Acumulado", yaxis="y2", mode="lines+markers", line=dict(color="#f59e0b", width=3)))
+            fig_par.add_hline(y=80, yref="y2", line_dash="dash", line_color="#ef4444", annotation_text="80% del Riesgo", annotation_position="top left")
+            fig_par.update_layout(
+                title=dict(text=titulo_par, font=dict(size=13.5, color="#f8fafc"), x=0.01),
+                template="plotly_dark", paper_bgcolor="#111827", plot_bgcolor="#0f172a",
+                yaxis=dict(title="Expedientes", range=[0, max(1, df_par["Expedientes"].max()) * 1.18]),
+                yaxis2=dict(title="% Acumulado", overlaying="y", side="right", range=[0, 108]),
+                legend=dict(orientation="h", y=1.12), height=360, margin=dict(l=15, r=15, t=55, b=35)
+            )
+            st.plotly_chart(fig_par, use_container_width=True)
+
         st.markdown("---")
+
+        # ======================================================================
+        # BLOQUE 2.2: RIESGO POR ETAPA PROCESAL + MAPA DE CALOR
+        # ======================================================================
         st.subheader(f"2.2. Riesgo de Prescripción según Etapa Procesal ({sub_titulo_sec})")
         mostrar_tabla_centrada(t_2_2_et)
 
+        if not df_p_act.empty:
+            hm_data = pd.crosstab(df_p_act["Etapa_Presc_Cat"], df_p_act["Rango_Presc"]).reindex(index=ORDEN_ETAPAS, columns=ORDEN_RANGOS_PRESC, fill_value=0)
+            hm_data.index = [ETAPAS_CORTAS[e] for e in ORDEN_ETAPAS]
+            hm_data.columns = ["Presc (<=0d)", "Crítico (1-15d)", "Alto (16-30d)", "Moderado (31-60d)", "Prev. (61-90d)", "Monit. (91-240d)"]
+            fig_hm = px.imshow(
+                hm_data, text_auto=True, aspect="auto", color_continuous_scale="YlOrRd",
+                title="Gráfico 2.2 — Mapa de Calor: Riesgo por Etapa Procesal y Plazo",
+                labels=dict(x="Rango de Riesgo", y="", color="Exp.")
+            )
+            fig_hm.update_layout(
+                title=dict(font=dict(size=13.5, color="#f8fafc"), x=0.01),
+                template="plotly_dark", paper_bgcolor="#111827", height=360, margin=dict(l=15, r=15, t=45, b=25)
+            )
+            st.plotly_chart(fig_hm, use_container_width=True)
+
+        st.markdown("---")
+
+        # ======================================================================
+        # BLOQUE 2.3: VELOCIDAD DE PRESCRIPCIÓN (CRONOGRAMA MENSUAL DE VENCIMIENTOS)
+        # ======================================================================
+        st.subheader(f"2.3. Velocidad de Prescripción — Cronograma Mensual de Vencimientos ({sub_titulo_sec})")
+        if not df_p_act.empty:
+            df_23_tl = df_p_act.dropna(subset=["Fecha_Presc_Dt"]).copy()
+            if not df_23_tl.empty:
+                df_23_tl["_Periodo"] = df_23_tl["Fecha_Presc_Dt"].dt.to_period("M")
+                df_tl = df_23_tl.groupby("_Periodo").size().reset_index(name="Expedientes").sort_values("_Periodo")
+                df_tl["Mes_Label"] = df_tl["_Periodo"].apply(lambda p: f"{MESES_ABR[p.month]} {p.year}")
+                df_tl["Acumulado"] = df_tl["Expedientes"].cumsum()
+                tot_tl = max(1, int(df_tl["Expedientes"].sum()))
+                df_tl["Pct_Mes"] = (df_tl["Expedientes"] / tot_tl * 100.0).round(1)
+                df_tl["Pct_Acum"] = (df_tl["Acumulado"] / tot_tl * 100.0).round(1)
+
+                max_bar_tl = max(1, int(df_tl["Expedientes"].max()))
+                max_acu_tl = max(1, int(df_tl["Acumulado"].max()))
+
+                # Color dinámico por cercanía temporal (ya vencido / <= 2 meses / <= 4 meses / > 4 meses)
+                per_corte = FECHA_CORTE_PRESC.to_period("M")
+                colores_bar_tl = []
+                for p_m in df_tl["_Periodo"]:
+                    diff_m = (p_m.year - per_corte.year) * 12 + (p_m.month - per_corte.month)
+                    if diff_m <= 0:
+                        colores_bar_tl.append("#ef4444")   # Prescrito / Mes actual
+                    elif diff_m <= 2:
+                        colores_bar_tl.append("#f97316")   # Urgente (1-2 meses)
+                    elif diff_m <= 4:
+                        colores_bar_tl.append("#2563eb")   # Mediano plazo
+                    else:
+                        colores_bar_tl.append("#0284c7")   # Horizonte preventivo
+
+                # Etiquetas dentro de la barra si tiene altura suficiente; afuera solo si es muy baja
+                txt_bar_in = [
+                    f"<b>{int(r['Expedientes'])}</b><br><span style='font-size:10px;'>({r['Pct_Mes']:.1f}%)</span>"
+                    if r["Expedientes"] >= max_bar_tl * 0.22 else ""
+                    for _, r in df_tl.iterrows()
+                ]
+                txt_bar_out = [
+                    f"<b>{int(r['Expedientes'])}</b> ({r['Pct_Mes']:.1f}%)"
+                    if r["Expedientes"] < max_bar_tl * 0.22 else ""
+                    for _, r in df_tl.iterrows()
+                ]
+
+                custom_tl = np.stack([df_tl["Pct_Mes"], df_tl["Acumulado"], df_tl["Pct_Acum"]], axis=-1)
+
+                fig_2_3_tl = go.Figure()
+
+                # Traza 1: Barras de vencimientos mensuales con etiquetas internas limpias
+                fig_2_3_tl.add_trace(go.Bar(
+                    x=df_tl["Mes_Label"],
+                    y=df_tl["Expedientes"],
+                    name="Vencimientos del Mes",
+                    width=0.46,
+                    marker=dict(
+                        color=colores_bar_tl,
+                        line=dict(color="rgba(255,255,255,0.22)", width=1.2)
+                    ),
+                    text=txt_bar_in,
+                    textposition="inside",
+                    insidetextanchor="middle",
+                    textfont=dict(color="#ffffff", size=11.5),
+                    customdata=custom_tl,
+                    hovertemplate=(
+                        "<b>📅 Mes:</b> %{x}<br>"
+                        "<b>⏳ Vencen este mes:</b> %{y:,} exp. (%{customdata[0]:.1f}%)<br>"
+                        "<b>📈 Riesgo acumulado:</b> %{customdata[1]:,.0f} exp. (%{customdata[2]:.1f}%)"
+                        "<extra></extra>"
+                    )
+                ))
+
+                # Etiquetas superiores solo para barras muy pequeñas (< 22% de altura)
+                if any(txt_bar_out):
+                    fig_2_3_tl.add_trace(go.Scatter(
+                        x=df_tl["Mes_Label"],
+                        y=df_tl["Expedientes"],
+                        mode="text",
+                        text=txt_bar_out,
+                        textposition="top center",
+                        textfont=dict(color="#e2e8f0", size=10.5),
+                        showlegend=False,
+                        hoverinfo="skip"
+                    ))
+
+                # Traza 2: Curva de riesgo acumulado con área sutil
+                fig_2_3_tl.add_trace(go.Scatter(
+                    x=df_tl["Mes_Label"],
+                    y=df_tl["Acumulado"],
+                    name="Riesgo Acumulado",
+                    mode="lines+markers",
+                    yaxis="y2",
+                    fill="tozeroy",
+                    fillcolor="rgba(245, 158, 11, 0.07)",
+                    line=dict(color="#f59e0b", width=3.2, shape="spline", smoothing=0.35),
+                    marker=dict(size=9, color="#fbbf24", line=dict(color="#111827", width=2)),
+                    customdata=custom_tl,
+                    hovertemplate=(
+                        "<b>📅 Hasta:</b> %{x}<br>"
+                        "<b>📈 Riesgo Acumulado:</b> %{y:,} exp. (%{customdata[2]:.1f}% del total)<br>"
+                        "<b>⏳ Vencimientos del mes:</b> %{customdata[0]:.1f}%"
+                        "<extra></extra>"
+                    )
+                ))
+
+                # Pastillas flotantes (badges) para la curva acumulada: cero cruce con barras
+                anot_acum = []
+                for _, r in df_tl.iterrows():
+                    ratio_bar = r["Expedientes"] / max_bar_tl
+                    ratio_acu = r["Acumulado"] / max_acu_tl
+                    y_shift = 20 if (ratio_bar < 0.22 and ratio_acu < 0.25) else 18
+                    anot_acum.append(dict(
+                        x=r["Mes_Label"],
+                        y=r["Acumulado"],
+                        yref="y2",
+                        text=f"<b>{int(r['Acumulado'])}</b> ({r['Pct_Acum']:.0f}%)",
+                        showarrow=False,
+                        yshift=y_shift,
+                        font=dict(size=10.5, color="#fde68a"),
+                        bgcolor="rgba(15, 23, 42, 0.90)",
+                        bordercolor="rgba(245, 158, 11, 0.65)",
+                        borderwidth=1,
+                        borderpad=3
+                    ))
+
+                # Línea de referencia al 80% del acumulado
+                umbral_80_tl = max_acu_tl * 0.80
+                fig_2_3_tl.add_hline(
+                    y=umbral_80_tl, yref="y2",
+                    line_dash="dot", line_color="rgba(248, 113, 113, 0.65)", line_width=1.4,
+                    annotation_text="Umbral 80% Acumulado",
+                    annotation_position="top left",
+                    annotation_font=dict(color="#fca5a5", size=10.5)
+                )
+
+                fig_2_3_tl.update_layout(
+                    title=dict(
+                        text=f"Gráfico 2.3 — Proyección Mensual de Vencimientos y Curva Acumulada ({sub_titulo_sec})",
+                        font=dict(size=13.5, color="#f8fafc"), x=0.01, y=0.96
+                    ),
+                    template="plotly_dark",
+                    paper_bgcolor="#111827",
+                    plot_bgcolor="#0f172a",
+                    legend=dict(
+                        orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+                        font=dict(size=11.5, color="#f8fafc")
+                    ),
+                    xaxis=dict(
+                        title="Mes de Vencimiento",
+                        type="category",
+                        tickfont=dict(size=11.5, color="#f8fafc"),
+                        showgrid=False
+                    ),
+                    yaxis=dict(
+                        title="Expedientes por Mes",
+                        range=[0, max_bar_tl * 1.25],
+                        gridcolor="rgba(148, 163, 184, 0.12)",
+                        zeroline=False
+                    ),
+                    yaxis2=dict(
+                        title="Expedientes Acumulados",
+                        overlaying="y",
+                        side="right",
+                        range=[0, max_acu_tl * 1.24],
+                        tickformat=",d",
+                        nticks=6,
+                        showgrid=False,
+                        tickfont=dict(color="#fbbf24")
+                    ),
+                    annotations=anot_acum,
+                    height=410,
+                    margin=dict(l=20, r=30, t=68, b=42),
+                    hoverlabel=dict(bgcolor="#0f172a", bordercolor="#f59e0b", font_size=12, font_color="#f8fafc")
+                )
+                st.plotly_chart(fig_2_3_tl, use_container_width=True)
+
+        st.markdown("---")
+
+        # ======================================================================
+        # BLOQUE 2.4: CARGA DE PRESCRIPCIÓN POR MAGISTRADO / RESPONSABLE
+        # ======================================================================
+        st.subheader(f"2.4. Riesgo de Prescripción por Magistrado ({sub_titulo_sec})")
+        if not df_p_act.empty:
+            df_24_m = df_p_act.copy()
+            df_24_m["Mag_Clean"] = (
+                df_24_m["MAGISTRADO"].fillna("<SIN MAGISTRADO>").astype(str).str.strip()
+                .replace({"": "<SIN MAGISTRADO>", "-": "<SIN MAGISTRADO>", "None": "<SIN MAGISTRADO>", "nan": "<SIN MAGISTRADO>"})
+            )
+            ct_mag_rg = pd.crosstab(df_24_m["Mag_Clean"], df_24_m["Rango_Presc"]).reindex(columns=ORDEN_RANGOS_PRESC, fill_value=0)
+            t_2_4_mag = pd.DataFrame(index=ct_mag_rg.index)
+            t_2_4_mag["🔴 Prescritos (<=0d)"] = ct_mag_rg["Prescritos (<= 0 días)"]
+            t_2_4_mag["🟡 Crítico (1-15d)"] = ct_mag_rg["Crítico: De 1 a 15 días"]
+            t_2_4_mag["🟢 Alto (16-30d)"] = ct_mag_rg["Alto: De 16 a 30 días"]
+            t_2_4_mag["🔵 Moderado (31-60d)"] = ct_mag_rg["Moderado: De 31 a 60 días"]
+            t_2_4_mag["🔵 Preventivo (61-90d)"] = ct_mag_rg["Preventivo: De 61 a 90 días"]
+            t_2_4_mag["🟣 Monitoreo (91-240d)"] = ct_mag_rg["Monitoreo: De 91 a 240 días"]
+            t_2_4_mag["Total"] = t_2_4_mag.sum(axis=1)
+            t_2_4_mag = t_2_4_mag.sort_values(by=["Total", "🔴 Prescritos (<=0d)", "🟡 Crítico (1-15d)"], ascending=[False, False, False])
+
+            tot_mag_p = max(1, int(t_2_4_mag["Total"].sum()))
+            t_2_4_mag["% Part."] = (t_2_4_mag["Total"] / tot_mag_p * 100).round(2)
+            t_2_4_mag = t_2_4_mag.reset_index().rename(columns={"Mag_Clean": "Magistrado"})
+            t_2_4_mag.insert(0, "N°", [str(i) for i in range(1, len(t_2_4_mag) + 1)])
+
+            fila_tot_24m = {
+                "N°": "",
+                "Magistrado": "TOTAL POR MAGISTRADO",
+                **{c: int(t_2_4_mag[c].sum()) for c in t_2_4_mag.columns if c not in ("N°", "Magistrado", "% Part.")},
+                "% Part.": 100.0 if int(t_2_4_mag["Total"].sum()) > 0 else 0.0
+            }
+            t_2_4_mag = pd.concat([t_2_4_mag, pd.DataFrame([fila_tot_24m])], ignore_index=True)
+            mostrar_tabla_centrada(t_2_4_mag)
+
     # --------------------------------------------------------------------------
-    # PESTAÑA 3: PRODUCCIÓN MENSUAL Y PRONUNCIAMIENTOS (+ EVOLUCIÓN Y RANKING)
+    # PESTAÑA 3: PRODUCCIÓN MENSUAL Y PRONUNCIAMIENTOS (CUADRO + GRÁFICO)
     # --------------------------------------------------------------------------
-    with tab_prod:
-        inf_mes_pr = int(df_pr_mes_act["Es_Informe"].sum())
-        res_mes_pr = len(df_pr_mes_act) - inf_mes_pr
-        pr_anc_mes = int(df_pr_mes_act["Es_Sede_Central"].sum())
-        pr_oda_mes = int((~df_pr_mes_act["Es_Sede_Central"]).sum())
+    elif mod_actual == "PROD":
+        if df_pr_f.empty:
+            st.info("No se encontraron registros en la hoja 'Producción'.")
+        else:
+            MESES_ES = {
+                1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril",
+                5: "Mayo", 6: "Junio", 7: "Julio", 8: "Agosto",
+                9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"
+            }
 
-        prk1, prk2, prk3, prk4 = st.columns(4)
-        prk1.metric(f"PRODUCCIÓN {mes_act_lbl.upper()}", f"{len(df_pr_mes_act):,} exp.", f"ANC: {pr_anc_mes:,} | ODANC: {pr_oda_mes:,}" if es_nacional else f"Sede: {dist_sel}")
-        prk2.metric(f"RESOLUCIONES ({mes_act_lbl.upper()})", f"{res_mes_pr:,} res.", f"{res_mes_pr/max(1,len(df_pr_mes_act))*100:.1f}% del mes actual")
-        prk3.metric(f"INFORMES ({mes_act_lbl.upper()})", f"{inf_mes_pr:,} inf.", f"{inf_mes_pr/max(1,len(df_pr_mes_act))*100:.1f}% del mes actual")
-        with prk4:
-            sub_pr_acum = f"↑ Mes ant.: {int((df_pr_f['Periodo_M'] == per_ant).sum()):,} | Mes act.: {len(df_pr_mes_act):,}" if (not fechas_pr.empty and per_act is not None and per_ant is not None) else "↑ Ver detalle acumulado"
-            st.button(f"PRODUCCIÓN ACUMULADA\n**{len(df_pr_f):,} exp.**\n*{sub_pr_acum}*", key="kpi_btn_prod_acumulada", on_click=alternar_kpi, args=("PROD_ACUMULADA",), use_container_width=True)
+            # 1. Filtro base por Distrito / Sede (Sidebar)
+            df_pr_base = df_pr_f.copy()
+            df_pr_base["Anio_Desc"] = df_pr_base["Fecha_Desc_Dt"].dt.year
+            df_pr_base["Mes_Num"] = df_pr_base["Fecha_Desc_Dt"].dt.month
 
-        st.markdown("<div style='margin-bottom: 10px;'></div>", unsafe_allow_html=True)
+            # 2. Panel de Filtros Multidimensionales en Cascada (2 filas x 3 columnas)
+            with st.container(border=True):
+                f_c1, f_c2, f_c3 = st.columns(3)
+                anios_disp = sorted(df_pr_base["Anio_Desc"].dropna().astype(int).unique().tolist(), reverse=True)
+                anio_sel = f_c1.selectbox("📅 Año:", anios_disp if anios_disp else [2026], key="pr_anio")
 
-        df_pr_valid = df_pr_f.dropna(subset=["Fecha_Desc_Dt"]).copy()
-        if not df_pr_valid.empty:
-            gpr1, gpr2 = st.columns(2)
-            with gpr1:
-                df_pr_valid["Periodo_Str"] = df_pr_valid["Fecha_Desc_Dt"].dt.to_period("M").astype(str)
-                serie_m = df_pr_valid.groupby("Periodo_Str").size().sort_index()
+                df_anio = df_pr_base[df_pr_base["Anio_Desc"] == anio_sel].copy()
+                meses_disp = sorted(df_anio["Mes_Num"].dropna().astype(int).unique().tolist())
+                opciones_mes = ["Todos (Acumulado Anual)"] + [MESES_ES[m] for m in meses_disp]
+                idx_mes_def = len(opciones_mes) - 1 if len(opciones_mes) > 1 else 0
+                mes_sel_lbl = f_c2.selectbox("🗓️ Mes:", opciones_mes, index=idx_mes_def, key="pr_mes")
+
+                col_u_pr = "Unidad_Prod_Todos" if es_nacional else "Unidad_Prod"
+                unidades_disp = ["Todas"] + sorted(df_anio[col_u_pr].dropna().unique().tolist())
+                unidad_sel = f_c3.selectbox("🏛️ Despacho o Unidad:", unidades_disp, key="pr_unidad")
+
+                f_c4, f_c5, f_c6 = st.columns(3)
+                df_temp_u = df_anio if unidad_sel == "Todas" else df_anio[df_anio[col_u_pr] == unidad_sel]
+                mags_disp = ["Todos"] + sorted(df_temp_u["Magistrado_Prod"].dropna().unique().tolist())
+                mag_sel = f_c4.selectbox("⚖️ Magistrado:", mags_disp, key="pr_mag")
+
+                df_temp_m = df_temp_u if mag_sel == "Todos" else df_temp_u[df_temp_u["Magistrado_Prod"] == mag_sel]
+                asist_disp = ["Todos"] + sorted(df_temp_m["Asistente_Prod"].dropna().unique().tolist())
+                asist_sel = f_c5.selectbox("🧑‍💼 Asistente Judicial (Usuario Descarga):", asist_disp, key="pr_asist")
+
+                col_pron = "DETALLE DEL TIPO DE PRONUNCIAMIENTO" if "DETALLE DEL TIPO DE PRONUNCIAMIENTO" in df_temp_m.columns else "TIPO DE AUTO"
+                prons_disp = ["Todos"] + sorted(df_temp_m[col_pron].fillna("NO ESPECIFICADO").astype(str).str.strip().unique().tolist())
+                pron_sel = f_c6.selectbox("📑 Tipo de Pronunciamiento:", prons_disp, key="pr_pron")
+
+            # 3. Aplicar filtros transversales
+            df_pr_evol = df_anio.copy()
+            if unidad_sel != "Todas":
+                df_pr_evol = df_pr_evol[df_pr_evol[col_u_pr] == unidad_sel]
+            if mag_sel != "Todos":
+                df_pr_evol = df_pr_evol[df_pr_evol["Magistrado_Prod"] == mag_sel]
+            if asist_sel != "Todos":
+                df_pr_evol = df_pr_evol[df_pr_evol["Asistente_Prod"] == asist_sel]
+            if pron_sel != "Todos":
+                df_pr_evol = df_pr_evol[df_pr_evol[col_pron].fillna("NO ESPECIFICADO").astype(str).str.strip() == pron_sel]
+
+            if mes_sel_lbl == "Todos (Acumulado Anual)":
+                df_pr_detalle = df_pr_evol.copy()
+                periodo_lbl = f"Año {anio_sel} (Acumulado)"
+            else:
+                mes_num_sel = [k for k, v in MESES_ES.items() if v == mes_sel_lbl][0]
+                df_pr_detalle = df_pr_evol[df_pr_evol["Mes_Num"] == mes_num_sel].copy()
+                periodo_lbl = f"{mes_sel_lbl} {anio_sel}"
+
+            sub_titulo_sec = "TODOS LOS DISTRITOS JUDICIALES" if es_nacional else dist_sel
+
+            # 4. Tarjetas KPI Ejecutivas
+            inf_mes_pr = int(df_pr_detalle["Es_Informe"].sum())
+            res_mes_pr = len(df_pr_detalle) - inf_mes_pr
+            pr_anc_mes = int(df_pr_detalle["Es_Sede_Central"].sum())
+            pr_oda_mes = int((~df_pr_detalle["Es_Sede_Central"]).sum())
+
+            prk1, prk2, prk3, prk4 = st.columns(4)
+            prk1.metric(f"PRODUCCIÓN {periodo_lbl.upper()}", f"{len(df_pr_detalle):,} exp.", f"ANC Sede: {pr_anc_mes:,} | ODANC: {pr_oda_mes:,}")
+            prk2.metric(f"RESOLUCIONES ({periodo_lbl.upper()})", f"{res_mes_pr:,} res.", f"{(res_mes_pr / max(1, len(df_pr_detalle)) * 100):.1f}% del periodo")
+            prk3.metric(f"INFORMES ({periodo_lbl.upper()})", f"{inf_mes_pr:,} inf.", f"{(inf_mes_pr / max(1, len(df_pr_detalle)) * 100):.1f}% del periodo")
+            prk4.metric(f"ACUMULADO ANUAL {anio_sel}", f"{len(df_pr_evol):,} exp.", f"Meses activos: {df_pr_evol['Mes_Num'].nunique()}")
+
+            st.markdown("---")
+
+            # ======================================================================
+            # BLOQUE 3.1: EVOLUCIÓN MENSUAL POR NOMBRE DE MES (Enero, Febrero...)
+            # ======================================================================
+            st.subheader(f"3.1. Evolución Mensual de Producción — {anio_sel} ({sub_titulo_sec})")
+            if not df_pr_evol.empty:
+                serie_m = df_pr_evol.groupby("Mes_Num").size().sort_index()
+                nombres_meses = [MESES_ES[int(m)] for m in serie_m.index]
                 media_pr = float(serie_m.mean())
 
                 fig_evol = go.Figure()
                 fig_evol.add_trace(go.Scatter(
-                    x=serie_m.index, y=serie_m.values, mode="lines+markers+text",
-                    text=[f"{v:,}" for v in serie_m.values], textposition="top center",
-                    textfont=dict(color="#f8fafc", size=11),
-                    name="Pronunciamientos", line=dict(color="#38bdf8", width=3), marker=dict(size=9, color="#38bdf8")
+                    x=nombres_meses, y=serie_m.values, mode="lines+markers+text",
+                    fill="tozeroy", fillcolor="rgba(56, 189, 248, 0.14)",
+                    text=[f"<b>{v:,}</b>" for v in serie_m.values], textposition="top center",
+                    textfont=dict(color="#f8fafc", size=11.5), name="Pronunciamientos",
+                    line=dict(color="#38bdf8", width=3),
+                    marker=dict(size=9, color="#38bdf8", line=dict(color="#0f172a", width=1.5)),
+                    hovertemplate="<b>🗓️ Mes:</b> %{x}<br><b>⚖️ Pronunciamientos:</b> %{y:,}<extra></extra>"
                 ))
-                fig_evol.add_hline(y=media_pr, line_dash="dash", line_color="#22c55e", annotation_text=f"Promedio Mensual ({media_pr:,.0f})", annotation_position="top left")
+                fig_evol.add_hline(
+                    y=media_pr, line_dash="dash", line_color="#22c55e", line_width=1.8,
+                    annotation_text=f"Promedio Mensual ({media_pr:,.0f})", annotation_position="top left",
+                    annotation_font=dict(color="#4ade80", size=11)
+                )
                 fig_evol.update_layout(
-                    title="Evolución Mensual de Producción vs. Promedio Histórico",
+                    title=dict(text=f"Gráfico 3.1 — Evolución Mensual de Producción ({anio_sel})", font=dict(size=13.5, color="#f8fafc"), x=0.01),
                     template="plotly_dark", paper_bgcolor="#111827", plot_bgcolor="#0f172a",
-                    xaxis_title="Mes", yaxis_title="Pronunciamientos Emitidos",
-                    yaxis=dict(range=[0, max(1, serie_m.max()) * 1.18]),
-                    height=360, margin=dict(l=15, r=15, t=45, b=25)
+                    xaxis=dict(type="category", title="Mes", tickfont=dict(size=11.5, color="#f8fafc"), range=[-0.4, len(nombres_meses) - 0.6]),
+                    yaxis=dict(title="Pronunciamientos Emitidos", range=[0, max(1, serie_m.max()) * 1.24], gridcolor="rgba(148, 163, 184, 0.14)"),
+                    height=340, margin=dict(l=20, r=20, t=48, b=35)
                 )
                 st.plotly_chart(fig_evol, use_container_width=True)
 
-            with gpr2:
-                prod_mag = df_pr_mes_act["Magistrado_Prod"].value_counts().head(10).sort_values(ascending=True)
-                med_mag = float(df_pr_mes_act["Magistrado_Prod"].value_counts().median()) if not df_pr_mes_act.empty else 0.0
-                fig_mag = px.bar(
-                    x=prod_mag.values, y=prod_mag.index, orientation="h", text=prod_mag.values,
-                    title=f"Top Magistrados por Producción ({mes_act_lbl})",
-                    labels={"x": "Pronunciamientos", "y": ""}
-                )
-                fig_mag.update_traces(marker_color="#6366f1", textposition="outside", textfont=dict(color="#f8fafc", size=11))
-                fig_mag.add_vline(x=med_mag, line_dash="dash", line_color="#f59e0b", annotation_text=f"Mediana ({med_mag:.0f})", annotation_position="top right")
-                fig_mag.update_layout(
-                    template="plotly_dark", paper_bgcolor="#111827", plot_bgcolor="#0f172a",
-                    xaxis=dict(range=[0, max(1, prod_mag.max()) * 1.18]),
-                    height=360, margin=dict(l=15, r=25, t=45, b=25)
-                )
-                st.plotly_chart(fig_mag, use_container_width=True)
+            st.markdown("---")
 
-        st.subheader(f"3.1. Comparativo Mensual de Producción: Mes Anterior vs. Mes Actual ({sub_titulo_sec})")
-        if not t_3_1.empty:
-            mostrar_tabla_centrada(t_3_1)
+            # ======================================================================
+            # BLOQUE 3.2: TIPO DE PRONUNCIAMIENTO Y/O SANCIÓN
+            # ======================================================================
+            st.subheader(f"3.2. Producción por Tipo de Pronunciamiento y/o Sanción — {periodo_lbl} ({sub_titulo_sec})")
+            t_3_2 = pd.DataFrame()
+            if not df_pr_detalle.empty and "DETALLE DEL TIPO DE PRONUNCIAMIENTO" in df_pr_detalle.columns:
+                df_pr_detalle["Pron_Limpio"] = df_pr_detalle["DETALLE DEL TIPO DE PRONUNCIAMIENTO"].fillna("NO ESPECIFICADO").astype(str).str.strip()
+                tot_lbl_32 = f"TOTAL {periodo_lbl.upper()} ({'TODOS' if es_nacional else dist_sel})"
+                if es_nacional:
+                    t_3_2_full = pd.DataFrame({
+                        "ANC Sede Central": df_pr_detalle[df_pr_detalle["Es_Sede_Central"]].groupby("Pron_Limpio").size(),
+                        "ODANCs (34 Dist.)": df_pr_detalle[~df_pr_detalle["Es_Sede_Central"]].groupby("Pron_Limpio").size()
+                    }).fillna(0).astype(int)
+                    t_3_2_full["Total Nacional"] = t_3_2_full["ANC Sede Central"] + t_3_2_full["ODANCs (34 Dist.)"]
+                    t_3_2_full = t_3_2_full.sort_values("Total Nacional", ascending=False).reset_index().rename(columns={"Pron_Limpio": "Tipo de Pronunciamiento / Sanción"})
+                    tot_32_nac = int(t_3_2_full["Total Nacional"].sum())
+                    if len(t_3_2_full) > 15:
+                        resto = t_3_2_full.iloc[15:]
+                        fila_otros = pd.DataFrame([{
+                            "Tipo de Pronunciamiento / Sanción": f"Otros pronunciamientos ({len(resto)} tipos)",
+                            "ANC Sede Central": int(resto["ANC Sede Central"].sum()),
+                            "ODANCs (34 Dist.)": int(resto["ODANCs (34 Dist.)"].sum()),
+                            "Total Nacional": int(resto["Total Nacional"].sum())
+                        }])
+                        t_3_2 = pd.concat([t_3_2_full.head(15), fila_otros], ignore_index=True)
+                    else:
+                        t_3_2 = t_3_2_full.copy()
+                    t_3_2["% Nac."] = (t_3_2["Total Nacional"] / tot_32_nac * 100).round(2) if tot_32_nac else 0.0
+                    fila_tot_32 = pd.DataFrame([{
+                        "Tipo de Pronunciamiento / Sanción": tot_lbl_32,
+                        "ANC Sede Central": int(t_3_2["ANC Sede Central"].sum()),
+                        "ODANCs (34 Dist.)": int(t_3_2["ODANCs (34 Dist.)"].sum()),
+                        "Total Nacional": tot_32_nac,
+                        "% Nac.": 100.0 if tot_32_nac else 0.0
+                    }])
+                    t_3_2 = pd.concat([t_3_2, fila_tot_32], ignore_index=True)
+                else:
+                    g_32 = df_pr_detalle.groupby("Pron_Limpio").agg(
+                        Resoluciones=("Es_Informe", lambda s: int((~s).sum())),
+                        Informes=("Es_Informe", lambda s: int(s.sum())),
+                        Total=("Es_Informe", "size")
+                    ).sort_values("Total", ascending=False).reset_index().rename(columns={"Pron_Limpio": "Tipo de Pronunciamiento / Sanción"})
+                    tot_32_loc = int(g_32["Total"].sum())
+                    if len(g_32) > 15:
+                        resto = g_32.iloc[15:]
+                        fila_otros = pd.DataFrame([{
+                            "Tipo de Pronunciamiento / Sanción": f"Otros pronunciamientos ({len(resto)} tipos)",
+                            "Resoluciones": int(resto["Resoluciones"].sum()),
+                            "Informes": int(resto["Informes"].sum()),
+                            "Total": int(resto["Total"].sum())
+                        }])
+                        t_3_2 = pd.concat([g_32.head(15), fila_otros], ignore_index=True)
+                    else:
+                        t_3_2 = g_32.copy()
+                    t_3_2["% Part."] = (t_3_2["Total"] / tot_32_loc * 100).round(2) if tot_32_loc else 0.0
+                    fila_tot_32 = pd.DataFrame([{
+                        "Tipo de Pronunciamiento / Sanción": tot_lbl_32,
+                        "Resoluciones": int(t_3_2["Resoluciones"].sum()),
+                        "Informes": int(t_3_2["Informes"].sum()),
+                        "Total": tot_32_loc,
+                        "% Part.": 100.0 if tot_32_loc else 0.0
+                    }])
+                    t_3_2 = pd.concat([t_3_2, fila_tot_32], ignore_index=True)
+            if not t_3_2.empty:
+                mostrar_tabla_centrada(t_3_2)
+                col_val_32 = "Total Nacional" if "Total Nacional" in t_3_2.columns else "Total"
+                col_pct_32 = "% Nac." if "% Nac." in t_3_2.columns else "% Part."
 
-        st.markdown("---")
-        st.subheader(f"3.2. Producción por Tipo de Pronunciamiento y/o Sanción — {mes_act_lbl} ({sub_titulo_sec})")
-        if not t_3_2.empty:
-            mostrar_tabla_centrada(t_3_2)
+                df_g_32 = t_3_2[~t_3_2["Tipo de Pronunciamiento / Sanción"].str.upper().str.startswith("TOTAL")].head(12).iloc[::-1].copy()
+                if not df_g_32.empty:
+                    max_32 = max(1, int(df_g_32[col_val_32].max()))
+                    fig_3_2 = go.Figure(go.Bar(
+                        y=df_g_32["Tipo de Pronunciamiento / Sanción"], x=df_g_32[col_val_32], orientation="h",
+                        marker=dict(color=df_g_32[col_val_32], colorscale=[[0.0, "#0369a1"], [0.5, "#0284c7"], [1.0, "#10b981"]], line=dict(color="#38bdf8", width=1)),
+                        text=[f"<b>{int(v):,}</b> ({p:.1f}%)" for v, p in zip(df_g_32[col_val_32], df_g_32[col_pct_32])],
+                        textposition="outside", textfont=dict(color="#f8fafc", size=11.5),
+                        customdata=np.stack([df_g_32[col_pct_32]], axis=-1),
+                        hovertemplate="<b>⚖️ Pronunciamiento:</b> %{y}<br><b>📊 Cantidad Emitida:</b> %{x:,} exp. (%{customdata[0]:.2f}%)<extra></extra>"
+                    ))
+                    fig_3_2.update_layout(
+                        title=dict(text=f"Gráfico 3.2 — Distribución por Tipo de Pronunciamiento y/o Sanción ({periodo_lbl})", font=dict(size=13.5, color="#f8fafc"), x=0.01),
+                        template="plotly_dark", paper_bgcolor="#111827", plot_bgcolor="#0f172a",
+                        xaxis=dict(title="Cantidad de Pronunciamientos", range=[0, max_32 * 1.24], gridcolor="rgba(148, 163, 184, 0.14)"),
+                        yaxis=dict(title="", tickfont=dict(size=11.5, color="#f8fafc")),
+                        height=max(340, len(df_g_32) * 34 + 90), margin=dict(l=15, r=30, t=48, b=35)
+                    )
+                    st.plotly_chart(fig_3_2, use_container_width=True)
 
-        st.markdown("---")
-        c_p3, c_p4 = st.columns(2)
-        with c_p3:
-            st.subheader(f"3.3. Producción por Unidad — {mes_act_lbl}")
+            st.markdown("---")
+
+            # ======================================================================
+            # BLOQUE 3.3: PRODUCCIÓN POR DESPACHO O UNIDAD
+            # ======================================================================
+            st.subheader(f"3.3. Producción por Despacho o Unidad — {periodo_lbl} ({sub_titulo_sec})")
+            t_3_3 = generar_cuadro_produccion_mes_actual(
+                df_pr_detalle,
+                col_u_pr,
+                "Unidad Orgánica / Funcional",
+                f"TOTAL {periodo_lbl.upper()} ({'TODOS' if es_nacional else dist_sel})"
+            )
             if not t_3_3.empty:
                 mostrar_tabla_centrada(t_3_3)
-        with c_p4:
-            st.subheader(f"3.4. Producción por Magistrado — {mes_act_lbl}")
+                df_g_33 = t_3_3[~t_3_3["Unidad Orgánica / Funcional"].str.upper().str.startswith("TOTAL")].head(12).iloc[::-1].copy()
+                if not df_g_33.empty:
+                    max_33 = max(1, int(df_g_33["Total"].max()))
+                    fig_3_3 = go.Figure()
+                    fig_3_3.add_trace(go.Bar(
+                        y=df_g_33["Unidad Orgánica / Funcional"], x=df_g_33["Resoluciones"], name="Resoluciones", orientation="h",
+                        marker=dict(color="#0284c7", line=dict(color="#38bdf8", width=1)),
+                        text=[f"<b>{int(v):,}</b>" if v >= max_33 * 0.06 else "" for v in df_g_33["Resoluciones"]],
+                        textposition="inside", insidetextanchor="middle", textfont=dict(color="#ffffff", size=11)
+                    ))
+                    fig_3_3.add_trace(go.Bar(
+                        y=df_g_33["Unidad Orgánica / Funcional"], x=df_g_33["Informes"], name="Informes", orientation="h",
+                        marker=dict(color="#f59e0b", line=dict(color="#fbbf24", width=1)),
+                        text=[f"<b>{int(v):,}</b>" if v >= max_33 * 0.06 else "" for v in df_g_33["Informes"]],
+                        textposition="inside", insidetextanchor="middle", textfont=dict(color="#111827", size=11)
+                    ))
+                    anot_33 = [
+                        dict(x=int(r["Total"]) + (max_33 * 0.018), y=r["Unidad Orgánica / Funcional"],
+                            text=f"<b>{int(r['Total']):,}</b> ({r['% Part.']:.1f}%)", xanchor="left", yanchor="middle", showarrow=False,
+                            font=dict(size=11.5, color="#f8fafc"))
+                        for _, r in df_g_33.iterrows()
+                    ]
+                    fig_3_3.update_layout(
+                        title=dict(text=f"Gráfico 3.3 — Desglose de Resoluciones e Informes por Despacho o Unidad ({periodo_lbl})", font=dict(size=13.5, color="#f8fafc"), x=0.01, y=0.95),
+                        barmode="stack", bargap=0.30, template="plotly_dark", paper_bgcolor="#111827", plot_bgcolor="#0f172a",
+                        xaxis=dict(title="Cantidad de Pronunciamientos Emitidos", range=[0, max_33 * 1.22], gridcolor="rgba(148, 163, 184, 0.14)"),
+                        yaxis=dict(title="", tickfont=dict(size=11, color="#f8fafc")),
+                        legend=dict(orientation="h", y=1.08, x=1.0, xanchor="right", font=dict(size=11.5, color="#f8fafc")),
+                        annotations=anot_33, height=max(320, len(df_g_33) * 42 + 95), margin=dict(l=15, r=35, t=60, b=40)
+                    )
+                    st.plotly_chart(fig_3_3, use_container_width=True)
+
+            st.markdown("---")
+
+            # ======================================================================
+            # BLOQUE 3.4: PRODUCCIÓN POR MAGISTRADO + GRÁFICO LOLLIPOP EJECUTIVO
+            # ======================================================================
+            st.subheader(f"3.4. Producción por Magistrado — {periodo_lbl} ({sub_titulo_sec})")
+            t_3_4 = generar_cuadro_produccion_mes_actual(
+                df_pr_detalle,
+                "Magistrado_Prod",
+                "Magistrado",
+                f"TOTAL {periodo_lbl.upper()} ({'TODOS' if es_nacional else dist_sel})"
+            )
             if not t_3_4.empty:
+                mask_no_tot = ~t_3_4["Magistrado"].str.upper().str.startswith("TOTAL")
+                nums_34 = [f"{i}. " for i in range(1, int(mask_no_tot.sum()) + 1)]
+                t_3_4.loc[mask_no_tot, "Magistrado"] = nums_34 + t_3_4.loc[mask_no_tot, "Magistrado"].astype(str)
+
                 mostrar_tabla_centrada(t_3_4)
+                df_g_34 = t_3_4[mask_no_tot].iloc[::-1].copy()
+                df_g_34["Magistrado"] = df_g_34["Magistrado"].str.replace(r"^\d+\.\s*", "", regex=True)
+                if not df_g_34.empty:
+                    max_34 = max(1, int(df_g_34["Total"].max()))
+                    med_mag = float(t_3_4[~t_3_4["Magistrado"].str.upper().str.startswith("TOTAL")]["Total"].median())
+                    fig_3_4 = go.Figure()
+                    for _, r_m in df_g_34.iterrows():
+                        fig_3_4.add_trace(go.Scatter(
+                            x=[0, int(r_m["Total"])], y=[r_m["Magistrado"], r_m["Magistrado"]],
+                            mode="lines", line=dict(color="#4f46e5", width=3), showlegend=False, hoverinfo="skip"
+                        ))
+                    custom_34 = np.stack([df_g_34["Resoluciones"], df_g_34["Informes"], df_g_34["% Part."]], axis=-1)
+                    fig_3_4.add_trace(go.Scatter(
+                        x=df_g_34["Total"], y=df_g_34["Magistrado"], mode="markers+text",
+                        marker=dict(size=13, color="#818cf8", line=dict(color="#ffffff", width=1.8)),
+                        text=[f"  <b>{int(r['Total']):,}</b> ({r['% Part.']:.1f}%)" for _, r in df_g_34.iterrows()],
+                        textposition="middle right", textfont=dict(size=11, color="#f8fafc"), customdata=custom_34,
+                        hovertemplate="<b>⚖️ Magistrado:</b> %{y}<br><b>📊 Total:</b> %{x:,} (%{customdata[2]:.2f}%)<br><b>📘 Resoluciones:</b> %{customdata[0]:,} | <b>📙 Informes:</b> %{customdata[1]:,}<extra></extra>"
+                    ))
+                    fig_3_4.add_vline(
+                        x=med_mag, line_dash="dash", line_color="#f59e0b", line_width=1.8,
+                        annotation_text=f"Mediana ({med_mag:.0f} exp.)", annotation_position="top right",
+                        annotation_font=dict(color="#fbbf24", size=11)
+                    )
+                    fig_3_4.update_layout(
+                        title=dict(text=f"Gráfico 3.4 — Ranking de Producción por Magistrado ({periodo_lbl})", font=dict(size=13.5, color="#f8fafc"), x=0.01),
+                        template="plotly_dark", paper_bgcolor="#111827", plot_bgcolor="#0f172a",
+                        xaxis=dict(title="Total de Pronunciamientos (Resoluciones + Informes)", range=[0, max_34 * 1.24], gridcolor="rgba(148, 163, 184, 0.14)"),
+                        yaxis=dict(title="", tickfont=dict(size=11, color="#f8fafc")), showlegend=False,
+                        height=max(320, len(df_g_34) * 32 + 90), margin=dict(l=15, r=30, t=48, b=40)
+                    )
+                    st.plotly_chart(fig_3_4, use_container_width=True)
+
+            st.markdown("---")
+
+            # ======================================================================
+            # BLOQUE 3.5: ESTRUCTURA OPERATIVA MAGISTRADO -> ASISTENTES JUDICIALES
+            # ======================================================================
+            st.subheader(f"3.5. Estructura Operativa: Magistrado / Despacho y sus Asistentes — {periodo_lbl}")
+            st.caption("Nota metodológica: Desglose jerárquico por Magistrado y usuario registrado en la descarga del proyecto (USUARIO DESCARGO PROYECTO).")
+
+            t_3_5 = generar_cuadro_jerarquico_asistentes(
+                df_pr_detalle,
+                f"TOTAL {periodo_lbl.upper()} ({'TODOS' if es_nacional else dist_sel})"
+            )
+            if not t_3_5.empty:
+                def resaltar_jerarquia(row):
+                    txt = str(row["Magistrado / Despacho → Asistente Judicial"])
+                    if txt.startswith("🏛️") or txt.startswith("TOTAL"):
+                        return ["background-color: #1e293b; font-weight: bold; color: #f8fafc;"] * len(row)
+                    return ["background-color: #0f172a; color: #cbd5e1;"] * len(row)
+
+                cols_centrar_35 = ["Resoluciones", "Informes", "Total", "% Despacho", "% Total"]
+                styler_35 = (
+                    t_3_5.style
+                    .hide(axis="index")
+                    .apply(resaltar_jerarquia, axis=1)
+                    .set_properties(subset=cols_centrar_35, **{"text-align": "center"})
+                    .set_properties(subset=[t_3_5.columns[0]], **{"text-align": "left"})
+                    .set_table_styles([
+                        {"selector": "table", "props": [("width", "100%"), ("border-collapse", "collapse"), ("font-size", "13px")]},
+                        {"selector": "thead th", "props": [
+                            ("background-color", "#1e293b"), ("color", "#f8fafc"), ("font-weight", "600"),
+                            ("padding", "10px 12px"), ("border-bottom", "2px solid #334155"),
+                            ("position", "sticky"), ("top", "0"), ("z-index", "1")
+                        ]},
+                        {"selector": "thead th.col0", "props": [("text-align", "left")]},
+                        {"selector": "thead th:not(.col0)", "props": [("text-align", "center")]},
+                        {"selector": "td", "props": [("padding", "8px 12px"), ("border-bottom", "1px solid #1e293b")]},
+                    ])
+                )
+                tabla_html_35 = styler_35.to_html(table_attributes='style="width: 100%; border-collapse: collapse;"')
+                html_35 = f'<div style="width: 100%; max-height: 620px; overflow-y: auto; border: 1px solid #334155; border-radius: 8px;">{tabla_html_35}</div>'
+                st.markdown(html_35, unsafe_allow_html=True)
+
+                df_g_35 = df_pr_detalle.groupby(["Magistrado_Prod", "Asistente_Prod"]).size().reset_index(name="Cantidad")
+                top_mags_35 = df_pr_detalle.groupby("Magistrado_Prod").size().sort_values(ascending=False).index.tolist()
+                df_g_35 = df_g_35[df_g_35["Magistrado_Prod"].isin(top_mags_35)].copy()
+
+                if not df_g_35.empty:
+                    tot_global_35 = max(1, int(df_g_35["Cantidad"].sum()))
+                    df_tot_desp = df_g_35.groupby("Magistrado_Prod", as_index=False)["Cantidad"].sum().rename(columns={"Cantidad": "Total_Despacho"})
+                    df_tot_desp["Pct_Despacho"] = (df_tot_desp["Total_Despacho"] / tot_global_35 * 100.0).round(1)
+                    max_x_35 = max(1, int(df_tot_desp["Total_Despacho"].max()))
+
+                    fig_3_5 = px.bar(
+                        df_g_35, x="Cantidad", y="Magistrado_Prod", color="Asistente_Prod", orientation="h",
+                        category_orders={"Magistrado_Prod": top_mags_35}, text="Cantidad",
+                        title=f"Gráfico 3.5 — Distribución de Producción por Asistente ({periodo_lbl})"
+                    )
+                    fig_3_5.update_traces(
+                        textposition="inside", insidetextanchor="middle", textfont=dict(size=10.5, color="#ffffff"),
+                        hovertemplate="<b>🏛️ Magistrado:</b> %{y}<br><b>🧑‍💼 Asistente:</b> %{fullData.name}<br><b>📊 Producción:</b> %{x:,}<extra></extra>"
+                    )
+                    fig_3_5.add_trace(go.Scatter(
+                        x=df_tot_desp["Total_Despacho"],
+                        y=df_tot_desp["Magistrado_Prod"],
+                        mode="text",
+                        text=[f"  <b>{int(r['Total_Despacho']):,}</b> ({r['Pct_Despacho']:.1f}%)" for _, r in df_tot_desp.iterrows()],
+                        textposition="middle right",
+                        textfont=dict(size=11, color="#f8fafc"),
+                        showlegend=False,
+                        hoverinfo="skip"
+                    ))
+                    fig_3_5.update_layout(
+                        template="plotly_dark", paper_bgcolor="#111827", plot_bgcolor="#0f172a",
+                        barmode="stack", showlegend=False,
+                        xaxis=dict(title="Total de Producción", range=[0, max_x_35 * 1.18], gridcolor="rgba(148, 163, 184, 0.14)"),
+                        yaxis=dict(title="", tickfont=dict(size=11, color="#f8fafc")),
+                        height=max(340, len(top_mags_35) * 36 + 90), margin=dict(l=15, r=30, t=48, b=35)
+                    )
+                    st.plotly_chart(fig_3_5, use_container_width=True)
+                
 
     # ==========================================================================
     # 11. EXPORTACIÓN DE INFORME EJECUTIVO GLOBAL (EXCEL Y PDF EN BARRA LATERAL)
     # ==========================================================================
+    if mod_actual != "CARGA":
+        orden_anios_cuadro = ["2021 y ant.", "2022", "2023", "2024", "2025", "2026"]
+        tot_carga_cuadro = max(1, len(df_act_sede))
+        if es_nacional:
+            filas_1_1 = []
+            for a_lbl in orden_anios_cuadro:
+                sub_a = df_act_sede[df_act_sede["Anio_Grupo"] == a_lbl]
+                sub_anc = sub_a[sub_a["Es_Sede_Central"]]
+                sub_oda = sub_a[~sub_a["Es_Sede_Central"]]
+                tot_a = len(sub_a)
+                filas_1_1.append({
+                    "Año de Creación": a_lbl,
+                    "ANC - En Trámite": int((sub_anc["Estado_Grupo"] == "Trámite").sum()),
+                    "ANC - Res. Impug.": int((sub_anc["Estado_Grupo"] == "Res. Impug.").sum()),
+                    "Total ANC": len(sub_anc),
+                    "ODANC - En Trámite": int((sub_oda["Estado_Grupo"] == "Trámite").sum()),
+                    "ODANC - Res. Impug.": int((sub_oda["Estado_Grupo"] == "Res. Impug.").sum()),
+                    "Total ODANC": len(sub_oda),
+                    "Total Nacional": tot_a,
+                    "% Part.": round(tot_a / tot_carga_cuadro * 100, 2) if len(df_act_sede) > 0 else 0.0
+                })
+            t_1_1_anio = pd.DataFrame(filas_1_1).sort_values(by=["Total Nacional", "Año de Creación"], ascending=[False, False]).reset_index(drop=True)
+            t_1_1_anio.insert(0, "N°", [str(i) for i in range(1, len(t_1_1_anio) + 1)])
+            t_1_1_anio = pd.concat([t_1_1_anio, pd.DataFrame([{
+                "N°": "", "Año de Creación": "TOTAL CARGA PROCESAL",
+                "ANC - En Trámite": int(t_1_1_anio["ANC - En Trámite"].sum()),
+                "ANC - Res. Impug.": int(t_1_1_anio["ANC - Res. Impug."].sum()),
+                "Total ANC": int(t_1_1_anio["Total ANC"].sum()),
+                "ODANC - En Trámite": int(t_1_1_anio["ODANC - En Trámite"].sum()),
+                "ODANC - Res. Impug.": int(t_1_1_anio["ODANC - Res. Impug."].sum()),
+                "Total ODANC": int(t_1_1_anio["Total ODANC"].sum()),
+                "Total Nacional": len(df_act_sede), "% Part.": 100.0 if len(df_act_sede) > 0 else 0.0
+            }])], ignore_index=True)
+        else:
+            filas_1_1 = []
+            for a_lbl in orden_anios_cuadro:
+                sub_a = df_act_sede[df_act_sede["Anio_Grupo"] == a_lbl]
+                tot_a = len(sub_a)
+                filas_1_1.append({
+                    "Año de Creación": a_lbl,
+                    "En Trámite": int((sub_a["Estado_Grupo"] == "Trámite").sum()),
+                    "Resuelto - Impug. Tránsito": int((sub_a["Estado_Grupo"] == "Res. Impug.").sum()),
+                    "Total Expedientes": tot_a,
+                    "% Part.": round(tot_a / tot_carga_cuadro * 100, 2) if len(df_act_sede) > 0 else 0.0
+                })
+            t_1_1_anio = pd.DataFrame(filas_1_1).sort_values(by=["Total Expedientes", "Año de Creación"], ascending=[False, False]).reset_index(drop=True)
+            t_1_1_anio.insert(0, "N°", [str(i) for i in range(1, len(t_1_1_anio) + 1)])
+            t_1_1_anio = pd.concat([t_1_1_anio, pd.DataFrame([{
+                "N°": "", "Año de Creación": f"TOTAL CARGA {dist_sel}",
+                "En Trámite": int(t_1_1_anio["En Trámite"].sum()),
+                "Resuelto - Impug. Tránsito": int(t_1_1_anio["Resuelto - Impug. Tránsito"].sum()),
+                "Total Expedientes": len(df_act_sede), "% Part.": 100.0 if len(df_act_sede) > 0 else 0.0
+            }])], ignore_index=True)
+
+        t_1_2_etapas, _ = construir_df_etapas_anio(df_act_sede)
+        t_1_3_cal_mes, _ = construir_df_mes_anio_estado(df_act_sede[df_act_sede["Etapa_Cat"] == "Calificación"], "TOTAL CALIFICACIÓN")
+        t_1_2_unidad, _ = construir_df_dimension_anio(df_act_sede, "Despacho o Unidad", "Unidad Orgánica", es_magistrado=False)
+        t_1_2_magistrado, _ = construir_df_dimension_anio(df_act_sede, "Magistrado", "Magistrado de Control", es_magistrado=True)
+        df_act = df_act_sede
+
     buffer_anexo = io.BytesIO()
     with pd.ExcelWriter(buffer_anexo, engine="openpyxl") as writer:
         t_1_1_anio.to_excel(writer, sheet_name="1_0_Carga_Por_Anio", index=False)
@@ -2180,88 +2983,630 @@ else:
 
     def construir_pdf_anexo():
         from fpdf import FPDF
-        pdf = FPDF(orientation="L", unit="mm", format="A4")
-        pdf.set_auto_page_break(auto=True, margin=12)
+        import tempfile
+        import textwrap
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        plt.rcParams["font.sans-serif"] = "DejaVu Sans"
+        plt.rcParams["axes.edgecolor"] = "#CBD5E1"
+        plt.rcParams["axes.linewidth"] = 0.8
+
+        class PDFEjecutivoANC(FPDF):
+            def header(self):
+                if self.page_no() > 1:
+                    self.set_fill_color(127, 29, 29)
+                    self.rect(10, 7, 277, 8, "F")
+                    self.set_fill_color(245, 158, 11)
+                    self.rect(10, 7, 2.5, 8, "F")
+                    self.set_xy(15, 8.2)
+                    self.set_font("Helvetica", "B", 7.8)
+                    self.set_text_color(255, 255, 255)
+                    self.cell(185, 5.5, limpiar_latin1(f"ANEXO ESTADÍSTICO OFICIAL - {nombre_ambito}"), align="L")
+                    self.set_font("Helvetica", "", 7.5)
+                    self.set_text_color(254, 243, 199)
+                    self.cell(85, 5.5, limpiar_latin1(f"Corte Carga: {FECHA_CORTE_CARGA.strftime('%d/%m/%Y')} | Presc.: {FECHA_CORTE_PRESC.strftime('%d/%m/%Y')}"), align="R")
+                    self.set_xy(10, 18)
+
+            def footer(self):
+                apb = self.auto_page_break
+                b_m = self.b_margin
+                self.set_auto_page_break(False)
+                self.set_y(-10)
+                self.set_draw_color(203, 213, 225)
+                self.line(10, self.get_y(), 287, self.get_y())
+                self.set_font("Helvetica", "I", 7.2)
+                self.set_text_color(100, 116, 139)
+                self.cell(195, 6, limpiar_latin1("Autoridad Nacional de Control del Poder Judicial | Unidad de Investigación y Análisis (UIA)"), align="L")
+                self.set_font("Helvetica", "B", 7.2)
+                self.cell(82, 6, limpiar_latin1(f"Página {self.page_no()}"), align="R")
+                self.set_auto_page_break(apb, margin=b_m)
+
+        pdf = PDFEjecutivoANC(orientation="L", unit="mm", format="A4")
+        pdf.set_auto_page_break(auto=True, margin=14)
         pdf.add_page()
 
+        # --- ENCABEZADO INSTITUCIONAL DE PORTADA ---
         pdf.set_fill_color(127, 29, 29)
-        pdf.rect(10, 10, 277, 18, "F")
+        pdf.rect(10, 10, 277, 20, "F")
         pdf.set_fill_color(245, 158, 11)
-        pdf.rect(10, 10, 3, 18, "F")
+        pdf.rect(10, 10, 3.5, 20, "F")
 
         pdf.set_xy(16, 12)
-        pdf.set_font("Helvetica", "B", 13)
+        pdf.set_font("Helvetica", "B", 13.5)
         pdf.set_text_color(255, 255, 255)
-        pdf.cell(0, 6, limpiar_latin1("AUTORIDAD NACIONAL DE CONTROL DEL PODER JUDICIAL"), ln=True)
+        pdf.cell(0, 6.5, limpiar_latin1("AUTORIDAD NACIONAL DE CONTROL DEL PODER JUDICIAL"), ln=True)
 
         pdf.set_x(16)
-        pdf.set_font("Helvetica", "", 9)
+        pdf.set_font("Helvetica", "B", 9.5)
+        pdf.set_text_color(253, 224, 71)
+        pdf.cell(0, 5, limpiar_latin1(f"ANEXO - RESUMEN DE INFORMACIÓN ESTADÍSTICA: {nombre_ambito}"), ln=True)
+
+        pdf.set_x(16)
+        pdf.set_font("Helvetica", "", 8)
         pdf.set_text_color(226, 232, 240)
-        pdf.cell(0, 5, limpiar_latin1(f"ANÁLISIS ESTADÍSTICO DE CARGA, PRESCRIPCIONES Y PRODUCCIÓN: {nombre_ambito} | Corte Carga: {FECHA_CORTE_CARGA.strftime('%d/%m/%Y')} | Presc.: {FECHA_CORTE_PRESC.strftime('%d/%m/%Y')} (UIA)"), ln=True)
-        pdf.ln(6)
+        pdf.cell(0, 4.5, limpiar_latin1(f"Corte Carga Procesal: {FECHA_CORTE_CARGA.strftime('%d/%m/%Y')}   |   Corte Riesgo Prescripción: {FECHA_CORTE_PRESC.strftime('%d/%m/%Y')}   |   Elaborado por: UIA"), ln=True)
+        pdf.ln(5)
 
-        pdf.set_font("Helvetica", "B", 8.5)
-        pdf.set_text_color(30, 41, 59)
-        resumen_kpis = (
-            f"CARGA PROCESAL: {len(df_act):,} exp.   |   "
-            f"EN JEFATURA: {len(df_act[df_act['Despacho_Norm'].str.contains('JEFATURA', na=False)]):,} exp.   |   "
-            f"RIESGO PRESC. (<=240d): {len(df_p_act):,} exp.   |   "
-            f"PROD. {mes_act_lbl.upper()}: {len(df_pr_mes_act):,} exp.   |   "
-            f"SIN INVENTARIAR: {len(df_no_inv):,} exp."
-        )
-        pdf.set_fill_color(241, 245, 249)
-        pdf.cell(277, 8, limpiar_latin1(resumen_kpis), border=1, ln=True, align="C", fill=True)
-        pdf.ln(4)
+        # --- TARJETAS KPI DE IMPACTO (6 TARJETAS CON DESGLOSE COMPLETO Y EXP. MÁS ANTIGUO) ---
+        tot_carga_pdf = len(df_act_sede)
+        tot_tram_pdf = int((df_act_sede["Estado_Grupo"] == "Trámite").sum())
+        tot_res_pdf = int((df_act_sede["Estado_Grupo"] == "Res. Impug.").sum())
+        df_jef_pdf = df_act_sede[df_act_sede["Despacho_Norm"].str.contains("JEFATURA", na=False)].copy()
+        tot_jef_pdf = len(df_jef_pdf)
+        tot_presc_pdf = len(df_p_act)
+        cnt_p0 = int((df_p_act["Dias_Calc"] <= 0).sum())
+        cnt_p1_90 = int(((df_p_act["Dias_Calc"] >= 1) & (df_p_act["Dias_Calc"] <= 90)).sum())
+        cnt_p91_240 = int(((df_p_act["Dias_Calc"] >= 91) & (df_p_act["Dias_Calc"] <= 240)).sum())
+        tot_prod_mes_pdf = len(df_pr_mes_act)
 
-        def dibujar_tabla_pdf(titulo, df_tab, max_filas=45):
+        # Cálculo dinámico de Tarjeta 5: SIN INVENTARIAR (desde Nota de Inventario en df_act_sede)
+        col_nota_inv = next((c for c in df_act_sede.columns if "NOTA" in str(c).upper() and "INVENTARIO" in str(c).upper()), None)
+        if col_nota_inv is not None:
+            df_ni_calc = df_act_sede[df_act_sede[col_nota_inv].fillna("").astype(str).str.upper().str.contains("SIN INVENTARIAR", na=False)]
+            tot_no_inv_pdf = len(df_ni_calc)
+            tram_no_inv_pdf = int((df_ni_calc["Estado_Grupo"] == "Trámite").sum())
+            res_no_inv_pdf = int((df_ni_calc["Estado_Grupo"] == "Res. Impug.").sum())
+        else:
+            tot_no_inv_pdf = len(df_no_inv)
+            if not df_no_inv.empty and "Estado_Grupo" in df_no_inv.columns:
+                tram_no_inv_pdf = int((df_no_inv["Estado_Grupo"] == "Trámite").sum())
+                res_no_inv_pdf = int((df_no_inv["Estado_Grupo"] == "Res. Impug.").sum())
+            else:
+                col_est_ni = next((c for c in df_no_inv.columns if "ESTADO" in str(c).upper()), None) if not df_no_inv.empty else None
+                if col_est_ni is not None:
+                    est_no_inv_u = df_no_inv[col_est_ni].fillna("").astype(str).str.upper()
+                    res_no_inv_pdf = int(est_no_inv_u.str.contains("RESUELTO|IMPUG", na=False).sum())
+                    tram_no_inv_pdf = tot_no_inv_pdf - res_no_inv_pdf
+                else:
+                    tram_no_inv_pdf = tot_no_inv_pdf
+                    res_no_inv_pdf = 0
+
+        # Cálculo dinámico de Tarjeta 6: EXP. MÁS ANTIGUO
+        val_antiguo_pdf = "S/D"
+        sub_antiguo_pdf = "Sin registro de fecha"
+        col_fecha_ant = next((c for c in ["Fecha_Creacion_Dt", "Fecha Creación", "Fecha_Creacion", "Fecha Ingreso"] if c in df_act_sede.columns), None)
+        if col_fecha_ant is not None and not df_act_sede.empty:
+            s_fechas_ant = pd.to_datetime(df_act_sede[col_fecha_ant], dayfirst=True, errors="coerce")
+            if s_fechas_ant.notna().any():
+                idx_ant = s_fechas_ant.idxmin()
+                f_ant = s_fechas_ant.loc[idx_ant]
+                row_ant = df_act_sede.loc[idx_ant]
+                val_antiguo_pdf = f"{MESES_ABR[int(f_ant.month)]} {int(f_ant.year)}"
+                desp_ant = str(row_ant.get("Despacho_Norm", row_ant.get("Despacho o Unidad", ""))).strip()[:16]
+                et_ant = ETAPAS_CORTAS.get(str(row_ant.get("Etapa_Cat", "")), str(row_ant.get("Etapa_Cat", ""))[:10])
+                est_ant = str(row_ant.get("Estado_Grupo", "")).strip()
+                sub_antiguo_pdf = f"{desp_ant} | {et_ant} | {est_ant}"
+
+        kpis_cards = [
+            ("1. CARGA TOTAL", f"{tot_carga_pdf:,} exp.", f"Trám: {tot_tram_pdf:,} | Res.Imp: {tot_res_pdf:,}", (30, 58, 138), (239, 246, 255)),
+            ("2. RIESGO PRESC. (<=240d)", f"{tot_presc_pdf:,} exp.", f"Presc: {cnt_p0:,} | 1-90d: {cnt_p1_90:,} | 91-240d: {cnt_p91_240:,}", (153, 27, 27), (254, 242, 242)),
+            ("3. EN JEFATURA", f"{tot_jef_pdf:,} exp.", f"{(tot_jef_pdf/max(1,tot_carga_pdf)*100):.2f}% de la carga total", (146, 64, 14), (255, 251, 235)),
+            (f"4. PROD. {mes_act_lbl.upper()[:11]}", f"{tot_prod_mes_pdf:,} exp.", f"Res: {int((~df_pr_mes_act['Es_Informe']).sum()):,} | Inf: {int(df_pr_mes_act['Es_Informe'].sum()):,}", (6, 95, 70), (236, 253, 245)),
+            ("5. SIN INVENTARIAR", f"{tot_no_inv_pdf:,} exp.", f"Trám: {tram_no_inv_pdf:,} | Res.Imp: {res_no_inv_pdf:,}", (71, 85, 105), (248, 250, 252)),
+            ("6. EXP. MÁS ANTIGUO", val_antiguo_pdf, sub_antiguo_pdf, (217, 119, 6), (255, 251, 235)),
+        ]
+        y_kpi = pdf.get_y()
+        n_cards = len(kpis_cards)
+        gap_card = 2.0
+        w_card = (277.0 - gap_card * (n_cards - 1)) / n_cards
+        for idx_c, (tit_c, val_c, sub_c, col_borde, col_bg) in enumerate(kpis_cards):
+            x_c = 10 + idx_c * (w_card + gap_card)
+            pdf.set_fill_color(*col_bg)
+            pdf.set_draw_color(*col_borde)
+            pdf.rect(x_c, y_kpi, w_card, 17, "DF")
+            pdf.set_fill_color(*col_borde)
+            pdf.rect(x_c, y_kpi, 1.8, 17, "F")
+            pdf.set_xy(x_c + 2.6, y_kpi + 1.5)
+            pdf.set_font("Helvetica", "B", 6.2)
+            pdf.set_text_color(*col_borde)
+            pdf.cell(w_card - 3.2, 4, limpiar_latin1(tit_c[:24]), ln=True)
+            pdf.set_x(x_c + 2.6)
+            pdf.set_font("Helvetica", "B", 10.5)
+            pdf.set_text_color(15, 23, 42)
+            pdf.cell(w_card - 3.2, 5.5, limpiar_latin1(val_c), ln=True)
+            pdf.set_x(x_c + 2.6)
+            pdf.set_font("Helvetica", "", 5.6)
+            pdf.set_text_color(71, 85, 105)
+            pdf.cell(w_card - 3.2, 4, limpiar_latin1(sub_c[:36]), ln=True)
+        pdf.set_y(y_kpi + 20)
+
+        def dibujar_banner_seccion(texto_sec):
+            if pdf.get_y() > 175:
+                pdf.add_page()
+            pdf.set_fill_color(30, 41, 59)
+            pdf.rect(10, pdf.get_y(), 277, 7, "F")
+            pdf.set_fill_color(245, 158, 11)
+            pdf.rect(10, pdf.get_y(), 3, 7, "F")
+            pdf.set_xy(15, pdf.get_y() + 1)
+            pdf.set_font("Helvetica", "B", 9.5)
+            pdf.set_text_color(255, 255, 255)
+            pdf.cell(0, 5, limpiar_latin1(texto_sec), ln=True)
+            pdf.ln(2.5)
+
+        MAPA_VINETA_PRESC = {
+            "PRESCRITOS (<= 0": (239, 68, 68),
+            "CRITICO: DE 1 A 15": (250, 204, 21),
+            "ALTO: DE 16 A 30": (101, 163, 13),
+            "MODERADO: DE 31 A 60": (37, 99, 235),
+            "PREVENTIVO: DE 61 A 90": (6, 182, 212),
+            "MONITOREO: DE 91 A 240": (139, 92, 246)
+        }
+
+        def dibujar_tabla_ejecutiva(titulo, df_tab, max_filas=50, con_vinetas_presc=False):
             if df_tab is None or df_tab.empty:
                 return
             df_show = pd.concat([df_tab.head(max_filas - 1), df_tab.tail(1)], ignore_index=True) if len(df_tab) > max_filas else df_tab.copy()
             cols = [c for c in df_show.columns if not str(c).startswith("_")]
             n_cols = len(cols)
-            w_primera = 95.0 if n_cols > 3 else 160.0
-            w_resto = (277.0 - w_primera) / max(1, (n_cols - 1))
-            anchos = [w_primera] + [w_resto] * (n_cols - 1)
 
-            pdf.set_font("Helvetica", "B", 9.5)
+            if pdf.get_y() > 165:
+                pdf.add_page()
+
+            pdf.set_font("Helvetica", "B", 9)
             pdf.set_text_color(127, 29, 29)
-            pdf.cell(0, 6, limpiar_latin1(titulo), ln=True)
+            pdf.cell(0, 5.5, limpiar_latin1(titulo), ln=True)
 
-            pdf.set_font("Helvetica", "B", 7.5)
+            if cols[0] == "N°":
+                w_num = 8.5
+                w_nom = 54.0 if n_cols > 8 else 112.0
+                w_resto = (277.0 - w_num - w_nom) / max(1, (n_cols - 2))
+                anchos = [w_num, w_nom] + [w_resto] * (n_cols - 2)
+            else:
+                w_primera = 96.0 if n_cols > 3 else 155.0
+                w_resto = (277.0 - w_primera) / max(1, (n_cols - 1))
+                anchos = [w_primera] + [w_resto] * (n_cols - 1)
+
+            font_h = 5.8 if n_cols >= 12 else (6.6 if n_cols >= 8 else 7.5)
+            pdf.set_font("Helvetica", "B", font_h)
             pdf.set_fill_color(30, 41, 59)
             pdf.set_text_color(255, 255, 255)
+            pdf.set_draw_color(148, 163, 184)
+
             for i, c in enumerate(cols):
-                etiq_col = "Rango de Riesgo Presc. / Por Presc." if (len(str(c)) > 36 and i == 0) else str(c)
-                pdf.cell(anchos[i], 6.5, limpiar_latin1(etiq_col[:38]), border=1, align="L" if i == 0 else "C", fill=True)
+                etiq = str(c)
+                etiq = (
+                    etiq.replace(" - Trámite", " Tr.")
+                    .replace(" - Res. Impug.", " Res.")
+                    .replace("Total - Trámite", "Tot.Tr")
+                    .replace("Total - Res. Impug.", "Tot.Rs")
+                    .replace("Resuelto - Impug. Tránsito", "Resuelto - Impug.")
+                    .replace("Rango de Riesgo de Expedientes Prescritos y por Prescribir", "Rango de Riesgo Presc. / Por Presc.")
+                    .replace("Prescritos (<=0d)", "Presc(<=0d)")
+                    .replace("Crítico (1-15d)", "Crít(1-15d)")
+                    .replace("Alto (16-30d)", "Alto(16-30d)")
+                    .replace("Moderado (31-60d)", "Mod(31-60d)")
+                    .replace("Preventivo (61-90d)", "Prev(61-90d)")
+                    .replace("Monitoreo (91-240d)", "Mon(91-240d)")
+                )
+                max_ch = max(4, int(anchos[i] / (font_h * 0.24)))
+                align_h = "C" if (i == 0 and cols[0] == "N°") else ("L" if (i == 0 or (i == 1 and cols[0] == "N°")) else "C")
+                pdf.cell(anchos[i], 6.6, limpiar_latin1(etiq[:max_ch]), border=1, align=align_h, fill=True)
             pdf.ln()
 
+            font_b = 6.2 if n_cols >= 12 else (6.8 if n_cols >= 8 else 7.4)
             for idx, row in df_show.iterrows():
-                prim = str(row[cols[0]])
-                es_tot = any(p in prim.upper() for p in ["TOTAL", "SUBTOTAL"])
-                pdf.set_font("Helvetica", "B" if es_tot else "", 7.5)
-                pdf.set_fill_color(226, 232, 240) if es_tot else pdf.set_fill_color(255 if idx % 2 == 0 else 248, 255 if idx % 2 == 0 else 250, 255 if idx % 2 == 0 else 252)
-                pdf.set_text_color(15, 23, 42) if es_tot else pdf.set_text_color(30, 41, 59)
+                texto_check = " ".join([str(row[c]) for c in cols[:2]])
+                es_tot = any(p in texto_check.upper() for p in ["TOTAL", "SUBTOTAL"])
+                es_sub = str(row[cols[1] if cols[0] == "N°" else cols[0]]).startswith("   •")
+
+                pdf.set_font("Helvetica", "B" if es_tot else ("I" if es_sub else ""), font_b)
+                if es_tot:
+                    pdf.set_fill_color(226, 232, 240)
+                    pdf.set_text_color(15, 23, 42)
+                elif es_sub:
+                    pdf.set_fill_color(241, 245, 249)
+                    pdf.set_text_color(51, 65, 85)
+                else:
+                    pdf.set_fill_color(255 if idx % 2 == 0 else 248, 255 if idx % 2 == 0 else 250, 255 if idx % 2 == 0 else 252)
+                    pdf.set_text_color(30, 41, 59)
 
                 for i, c in enumerate(cols):
                     val = row[c]
-                    txt = (f"{val:,.2f}" if "%" in str(c) else f"{int(val):,}") if isinstance(val, (int, float, np.integer, np.floating)) and pd.notna(val) else (str(val) if pd.notna(val) else "")
-                    pdf.cell(anchos[i], 5.8, limpiar_latin1(txt[:45]), border=1, align="L" if i == 0 else "C", fill=True)
+                    if isinstance(val, (int, float, np.integer, np.floating)) and pd.notna(val):
+                        if "%" in str(c):
+                            txt = f"{val:,.2f}%"
+                        else:
+                            txt = "-" if (int(val) == 0 and n_cols >= 10 and not es_tot) else f"{int(val):,}"
+                    else:
+                        txt = str(val) if pd.notna(val) else ""
+
+                    color_vineta = None
+                    if i == 0 and con_vinetas_presc and not es_tot:
+                        txt_norm_v = norm_txt(txt)
+                        for clave_v, rgb_v in MAPA_VINETA_PRESC.items():
+                            if clave_v in txt_norm_v:
+                                color_vineta = rgb_v
+                                break
+                        for em in ["🔴", "🟡", "🟢", "🔵", "🟣"]:
+                            txt = txt.replace(em, "").strip()
+
+                    max_cb = max(3, int(anchos[i] / (font_b * 0.23)))
+                    align_b = "C" if (i == 0 and cols[0] == "N°") else ("L" if (i == 0 or (i == 1 and cols[0] == "N°")) else "C")
+
+                    if color_vineta is not None:
+                        x_cell = pdf.get_x()
+                        y_cell = pdf.get_y()
+                        pdf.cell(anchos[i], 5.5, "", border=1, fill=True)
+                        pdf.set_fill_color(*color_vineta)
+                        pdf.set_draw_color(100, 116, 139)
+                        pdf.ellipse(x_cell + 2.2, y_cell + 1.35, 2.8, 2.8, "DF")
+                        pdf.set_fill_color(255 if idx % 2 == 0 else 248, 255 if idx % 2 == 0 else 250, 255 if idx % 2 == 0 else 252)
+                        pdf.set_xy(x_cell + 6.2, y_cell)
+                        pdf.cell(anchos[i] - 6.2, 5.5, limpiar_latin1(txt[:max_cb]), border=0, align="L")
+                        pdf.set_xy(x_cell + anchos[i], y_cell)
+                        pdf.set_draw_color(148, 163, 184)
+                    else:
+                        pdf.cell(anchos[i], 5.5, limpiar_latin1(txt[:max_cb]), border=1, align=align_b, fill=True)
                 pdf.ln()
             pdf.ln(3)
 
-        dibujar_tabla_pdf(f"1. Carga Total por Año de Creación y Estado ({sub_titulo_sec})", t_1_1_anio)
-        dibujar_tabla_pdf(f"1.1. Carga Procesal por Etapa y Sub-etapas de Calificación ({sub_titulo_sec})", t_1_2_etapas)
-        dibujar_tabla_pdf(f"1.2. Carga en Calificación por Mes de Creación, Año y Estado ({sub_titulo_sec})", t_1_3_cal_mes)
-        dibujar_tabla_pdf(f"2.1. Rango de Riesgo de Expedientes Prescritos y por Prescribir ({sub_titulo_sec})", t_2_1_presc)
-        dibujar_tabla_pdf(f"2.2. Riesgo de Prescripción por Etapa Procesal ({sub_titulo_sec})", t_2_2_et)
+        def incrustar_figura(fig_mpl, ancho_mm=277, alto_mm=64):
+            if pdf.get_y() + alto_mm > 192:
+                pdf.add_page()
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                tmp_path = tmp.name
+            fig_mpl.savefig(tmp_path, dpi=220, pad_inches=0.08, facecolor="white")
+            plt.close(fig_mpl)
+            pdf.image(tmp_path, x=10, y=pdf.get_y(), w=ancho_mm, h=alto_mm)
+            pdf.set_y(pdf.get_y() + alto_mm + 3)
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+
+        # ======================================================================
+        # SECCIÓN 1: CARGA PROCESAL (NUMERACIÓN LIMPIA 1.1, 1.2, 1.3, 1.4, 1.5)
+        # ======================================================================
+        dibujar_banner_seccion(f"1. ANÁLISIS DE CARGA PROCESAL: {tot_carga_pdf:,} EXPEDIENTES EN TOTAL ({sub_titulo_sec})")
+        dibujar_tabla_ejecutiva(f"1.1. Carga Total por Año de Creación y Estado ({sub_titulo_sec})", t_1_1_anio)
+
+        fig1, (ax1, ax2) = plt.subplots(1, 2, figsize=(13.5, 3.2), dpi=220)
+        fig1.patch.set_facecolor("white")
+
+        orden_anios_g = ["2021 y ant.", "2022", "2023", "2024", "2025", "2026"]
+        tr_anios = [int(((df_act_sede["Anio_Grupo"] == a) & (df_act_sede["Estado_Grupo"] == "Trámite")).sum()) for a in orden_anios_g]
+        re_anios = [int(((df_act_sede["Anio_Grupo"] == a) & (df_act_sede["Estado_Grupo"] == "Res. Impug.")).sum()) for a in orden_anios_g]
+        tot_anios = [t + r for t, r in zip(tr_anios, re_anios)]
+        x_pos = np.arange(len(orden_anios_g))
+        ax1.bar(x_pos, tr_anios, width=0.55, label="En Trámite", color="#1E3A8A")
+        ax1.bar(x_pos, re_anios, width=0.55, bottom=tr_anios, label="Resuelto - Impug.", color="#F59E0B")
+        max_y1 = max(1, max(tot_anios))
+        ax1.set_ylim(0, max_y1 * 1.24)
+        for i, v in enumerate(tot_anios):
+            if v > 0:
+                pct_v = v / max(1, tot_carga_pdf) * 100
+                ax1.text(i, v + max_y1 * 0.025, f"{v:,} ({pct_v:.1f}%)", ha="center", va="bottom", fontsize=7.3, fontweight="bold", color="#0F172A")
+        ax1.set_xticks(x_pos)
+        ax1.set_xticklabels(orden_anios_g, fontsize=8, fontweight="bold")
+        ax1.set_title("Gráfico 1.1 — Carga por Año de Creación y Estado", fontsize=9.5, fontweight="bold", color="#7F1D1D", pad=8)
+        ax1.grid(axis="y", linestyle="--", alpha=0.35)
+        ax1.spines["top"].set_visible(False)
+        ax1.spines["right"].set_visible(False)
+        ax1.legend(loc="upper left", fontsize=7.5, frameon=True)
+
+        et_cortas_g = [ETAPAS_CORTAS[e] for e in ORDEN_ETAPAS]
+        tr_et_g = [int(((df_act_sede["Etapa_Cat"] == e) & (df_act_sede["Estado_Grupo"] == "Trámite")).sum()) for e in ORDEN_ETAPAS]
+        re_et_g = [int(((df_act_sede["Etapa_Cat"] == e) & (df_act_sede["Estado_Grupo"] == "Res. Impug.")).sum()) for e in ORDEN_ETAPAS]
+        tot_et_g = [t + r for t, r in zip(tr_et_g, re_et_g)]
+        y_pos2 = np.arange(len(et_cortas_g))[::-1]
+        ax2.barh(y_pos2, tr_et_g, height=0.55, label="En Trámite", color="#0D9488")
+        ax2.barh(y_pos2, re_et_g, height=0.55, left=tr_et_g, label="Resuelto - Impug.", color="#E11D48")
+        max_x2 = max(1, max(tot_et_g))
+        ax2.set_xlim(0, max_x2 * 1.28)
+        for idx_y, v in zip(y_pos2, tot_et_g):
+            pct_e = v / max(1, tot_carga_pdf) * 100
+            ax2.text(v + max_x2 * 0.02, idx_y, f"{v:,} ({pct_e:.1f}%)", va="center", ha="left", fontsize=8, fontweight="bold", color="#0F172A")
+        ax2.set_yticks(y_pos2)
+        ax2.set_yticklabels(et_cortas_g, fontsize=8.2, fontweight="bold")
+        ax2.set_title("Gráfico 1.2 — Distribución Procesal por Etapa", fontsize=9.5, fontweight="bold", color="#7F1D1D", pad=8)
+        ax2.grid(axis="x", linestyle="--", alpha=0.35)
+        ax2.spines["top"].set_visible(False)
+        ax2.spines["right"].set_visible(False)
+        ax2.legend(loc="lower right", fontsize=7.5, frameon=True)
+
+        fig1.subplots_adjust(left=0.06, right=0.98, top=0.86, bottom=0.14, wspace=0.22)
+        incrustar_figura(fig1, ancho_mm=277, alto_mm=63)
+
+        # 1.2. Carga Procesal por Etapa y Sub-etapas de Calificación
+        dibujar_tabla_ejecutiva(f"1.2. Carga Procesal por Etapa y Sub-etapas de Calificación ({sub_titulo_sec})", t_1_2_etapas)
+
+        # 1.3. Sub-desglose de Calificación según Ubicación / Unidad Orgánica (UCIP / UPAD / USAP)
+        df_cal_pdf = df_act_sede[df_act_sede["Etapa_Cat"] == "Calificación"].copy()
+        if not df_cal_pdf.empty:
+            df_cal_pdf["Ubicacion_Cal"] = df_cal_pdf.apply(
+                lambda r: obtener_nombre_unidad_por_sigla(r.get("Despacho o Unidad", ""), bool(r.get("Es_Sede_Central", False))),
+                axis=1
+            )
+            g_cal_u = df_cal_pdf.groupby("Ubicacion_Cal").agg(
+                En_Tramite=("Estado_Grupo", lambda s: int((s == "Trámite").sum())),
+                Res_Impug=("Estado_Grupo", lambda s: int((s == "Res. Impug.").sum())),
+                Total=("Estado_Grupo", "size")
+            ).sort_values("Total", ascending=False).reset_index()
+            g_cal_u["% en Calificación"] = (g_cal_u["Total"] / max(1, len(df_cal_pdf)) * 100).round(2)
+            g_cal_u = g_cal_u.rename(columns={
+                "Ubicacion_Cal": "Ubicación / Unidad en Etapa de Calificación (UCIP / UPAD / USAP)",
+                "En_Tramite": "En Trámite",
+                "Res_Impug": "Resuelto - Impug."
+            })
+            fila_tot_cal_u = pd.DataFrame([{
+                "Ubicación / Unidad en Etapa de Calificación (UCIP / UPAD / USAP)": "TOTAL EN ETAPA DE CALIFICACIÓN POR UBICACIÓN",
+                "En Trámite": int(g_cal_u["En Trámite"].sum()),
+                "Resuelto - Impug.": int(g_cal_u["Resuelto - Impug."].sum()),
+                "Total": len(df_cal_pdf),
+                "% en Calificación": 100.0
+            }])
+            t_1_2_cal_ubic = pd.concat([g_cal_u, fila_tot_cal_u], ignore_index=True)
+            dibujar_tabla_ejecutiva(f"1.3. Sub-desglose de Calificación según Ubicación / Unidad Orgánica ({sub_titulo_sec})", t_1_2_cal_ubic)
+
+        # 1.4. Carga en Calificación por Mes de Creación, Año y Estado
+        dibujar_tabla_ejecutiva(f"1.4. Carga en Calificación por Mes de Creación, Año y Estado ({sub_titulo_sec})", t_1_3_cal_mes)
+
+        # 1.5. En Jefatura ODANC / Sede Central por Etapa
+        if not df_jef_pdf.empty:
+            filas_jef = []
+            for idx_j, et_j in enumerate(ORDEN_ETAPAS, start=1):
+                sub_ej = df_jef_pdf[df_jef_pdf["Etapa_Cat"] == et_j]
+                tr_j = int((sub_ej["Estado_Grupo"] == "Trámite").sum())
+                re_j = int((sub_ej["Estado_Grupo"] == "Res. Impug.").sum())
+                tot_j = len(sub_ej)
+                filas_jef.append({
+                    "N°": str(idx_j),
+                    "Etapa Procesal en Jefatura": et_j,
+                    "En Trámite": tr_j,
+                    "Resuelto - Impug.": re_j,
+                    "Total en Jefatura": tot_j,
+                    "% en Jefatura": round(tot_j / max(1, tot_jef_pdf) * 100, 2)
+                })
+            filas_jef.append({
+                "N°": "",
+                "Etapa Procesal en Jefatura": f"TOTAL CARGA EN JEFATURA ({'ANC / ODANCs' if es_nacional else dist_sel})",
+                "En Trámite": int((df_jef_pdf["Estado_Grupo"] == "Trámite").sum()),
+                "Resuelto - Impug.": int((df_jef_pdf["Estado_Grupo"] == "Res. Impug.").sum()),
+                "Total en Jefatura": tot_jef_pdf,
+                "% en Jefatura": 100.0
+            })
+            t_1_3_jef = pd.DataFrame(filas_jef)
+        else:
+            t_1_3_jef = pd.DataFrame([{
+                "N°": "-",
+                "Etapa Procesal en Jefatura": f"NO REGISTRA EXPEDIENTES EN JEFATURA ({dist_sel})",
+                "En Trámite": 0, "Resuelto - Impug.": 0, "Total en Jefatura": 0, "% en Jefatura": 0.0
+            }])
+        dibujar_tabla_ejecutiva(f"1.5. Carga Procesal en Jefatura por Etapa ({sub_titulo_sec})", t_1_3_jef)
+
+        # ======================================================================
+        # SECCIÓN 2: RIESGO DE PRESCRIPCIÓN DETALLADO (CON VIÑETAS DE COLOR)
+        # ======================================================================
+        dibujar_banner_seccion(f"2. ANÁLISIS DE RIESGO DE PRESCRIPCIÓN (<= 240 DÍAS): {tot_presc_pdf:,} EXPEDIENTES")
+        dibujar_tabla_ejecutiva(
+            f"2.1. Rango de Riesgo de Expedientes Prescritos y por Prescribir ({sub_titulo_sec})",
+            t_2_1_presc,
+            con_vinetas_presc=True
+        )
+        dibujar_tabla_ejecutiva(f"2.2. Matriz de Riesgo de Prescripción según Etapa Procesal ({sub_titulo_sec})", t_2_2_et)
+
+        if not df_p_act.empty:
+            fig2, (axp1, axp2) = plt.subplots(1, 2, figsize=(13.5, 3.3), dpi=220)
+            fig2.patch.set_facecolor("white")
+
+            etiq_sem_p = ["Presc.\n(<=0d)", "Crítico\n(1-15d)", "Alto\n(16-30d)", "Mod.\n(31-60d)", "Prev.\n(61-90d)", "Monit.\n(91-240d)"]
+            leyenda_sem_p = [
+                "Prescritos (<= 0 días)",
+                "Crítico: De 1 a 15 días",
+                "Alto: De 16 a 30 días",
+                "Moderado: De 31 a 60 días",
+                "Preventivo: De 61 a 90 días",
+                "Monitoreo: De 91 a 240 días"
+            ]
+            vals_sem_p = [int((df_p_act["Rango_Presc"] == rg).sum()) for rg in ORDEN_RANGOS_PRESC]
+            cols_sem_p = ["#EF4444", "#FACC15", "#65A30D", "#2563EB", "#06B6D4", "#8B5CF6"]
+            xp = np.arange(len(etiq_sem_p))
+            axp1.bar(xp, vals_sem_p, width=0.52, color=cols_sem_p, edgecolor="#334155", linewidth=0.6)
+            max_yp1 = max(1, max(vals_sem_p))
+            axp1.set_ylim(0, max_yp1 * 1.28)
+            for i, v in enumerate(vals_sem_p):
+                axp1.text(i, v + max_yp1 * 0.03, f"{v:,}\n({v/max(1,tot_presc_pdf)*100:.1f}%)", ha="center", va="bottom", fontsize=7.2, fontweight="bold", color="#0F172A")
+            axp1.set_xticks(xp)
+            axp1.set_xticklabels(etiq_sem_p, fontsize=7.2, fontweight="bold")
+            axp1.set_title("Gráfico 2.1 — Expedientes por Nivel de Riesgo de Prescripción", fontsize=9.2, fontweight="bold", color="#7F1D1D", pad=8)
+            axp1.grid(axis="y", linestyle="--", alpha=0.35)
+            axp1.spines["top"].set_visible(False)
+            axp1.spines["right"].set_visible(False)
+
+            handles_vinetas = [
+                plt.Line2D([0], [0], marker="o", color="w", label=lbl_s, markerfacecolor=col_s, markeredgecolor="#475569", markersize=7.5)
+                for lbl_s, col_s in zip(leyenda_sem_p, cols_sem_p)
+            ]
+            axp1.legend(handles=handles_vinetas, loc="upper left", fontsize=6.4, frameon=True, facecolor="#F8FAFC", edgecolor="#CBD5E1", title="Semáforo de Riesgo", title_fontsize=6.8)
+
+            vals_et_p = [int((df_p_act["Etapa_Presc_Cat"] == e).sum()) for e in ORDEN_ETAPAS]
+            yp2 = np.arange(len(ORDEN_ETAPAS))[::-1]
+            axp2.barh(yp2, vals_et_p, height=0.55, color="#B91C1C")
+            max_xp2 = max(1, max(vals_et_p))
+            axp2.set_xlim(0, max_xp2 * 1.28)
+            for idx_y, v in zip(yp2, vals_et_p):
+                axp2.text(v + max_xp2 * 0.02, idx_y, f"{v:,} ({v/max(1,tot_presc_pdf)*100:.1f}%)", va="center", ha="left", fontsize=8, fontweight="bold", color="#0F172A")
+            axp2.set_yticks(yp2)
+            axp2.set_yticklabels([ETAPAS_CORTAS[e] for e in ORDEN_ETAPAS], fontsize=8.2, fontweight="bold")
+            axp2.set_title("Gráfico 2.2 — Concentración de Riesgo por Etapa Procesal", fontsize=9.2, fontweight="bold", color="#7F1D1D", pad=8)
+            axp2.grid(axis="x", linestyle="--", alpha=0.35)
+            axp2.spines["top"].set_visible(False)
+            axp2.spines["right"].set_visible(False)
+
+            fig2.subplots_adjust(left=0.06, right=0.98, top=0.86, bottom=0.16, wspace=0.22)
+            incrustar_figura(fig2, ancho_mm=277, alto_mm=64)
+
+        # ======================================================================
+        # SECCIÓN 3: PRODUCCIÓN Y PRONUNCIAMIENTOS
+        # ======================================================================
+        dibujar_banner_seccion(f"3. PRODUCCIÓN Y PRONUNCIAMIENTOS ({sub_titulo_sec})")
         if not t_3_1.empty:
-            dibujar_tabla_pdf(f"3.1. Comparativo Mensual de Producción ({sub_titulo_sec})", t_3_1)
+            dibujar_tabla_ejecutiva(f"3.1. Comparativo Mensual de Producción: Mes Anterior vs. Mes Actual ({sub_titulo_sec})", t_3_1)
         if not t_3_2.empty:
-            dibujar_tabla_pdf(f"3.2. Producción por Tipo de Pronunciamiento / Sanción - {mes_act_lbl}", t_3_2)
+            dibujar_tabla_ejecutiva(f"3.2. Producción por Tipo de Pronunciamiento y/o Sanción - {mes_act_lbl}", t_3_2)
+
+        if not df_pr_f.empty and not t_3_3.empty:
+            fig3, (axr1, axr2) = plt.subplots(
+                1, 2,
+                figsize=(14.5, 3.6),
+                dpi=220,
+                gridspec_kw={"width_ratios": [1.0, 1.35]}
+            )
+            fig3.patch.set_facecolor("white")
+
+            # --- GRÁFICO 3.1: EVOLUCIÓN MENSUAL DESGLOSADA (RESOLUCIONES + INFORMES) ---
+            df_pr_anio_g = df_pr_f.dropna(subset=["Fecha_Desc_Dt"]).copy()
+            anio_max_pr = int(df_pr_anio_g["Fecha_Desc_Dt"].dt.year.max())
+            df_pr_anio_g = df_pr_anio_g[df_pr_anio_g["Fecha_Desc_Dt"].dt.year == anio_max_pr]
+            df_pr_anio_g["Mes_Num"] = df_pr_anio_g["Fecha_Desc_Dt"].dt.month
+
+            meses_ord = sorted(df_pr_anio_g["Mes_Num"].unique())
+            x_mes_lbl = [MESES_ABR[int(m)] for m in meses_ord]
+            res_mes_vals = [int(((df_pr_anio_g["Mes_Num"] == m) & (~df_pr_anio_g["Es_Informe"])).sum()) for m in meses_ord]
+            inf_mes_vals = [int(((df_pr_anio_g["Mes_Num"] == m) & (df_pr_anio_g["Es_Informe"])).sum()) for m in meses_ord]
+            tot_mes_vals = [r + inf for r, inf in zip(res_mes_vals, inf_mes_vals)]
+
+            x_m = np.arange(len(x_mes_lbl))
+            w_bar_m = 0.36 if len(x_m) <= 3 else 0.55
+
+            axr1.bar(x_m, res_mes_vals, width=w_bar_m, label="Resoluciones", color="#1E3A8A", edgecolor="#0F172A", linewidth=0.4)
+            axr1.bar(x_m, inf_mes_vals, width=w_bar_m, bottom=res_mes_vals, label="Informes", color="#D97706", edgecolor="#0F172A", linewidth=0.4)
+            if len(x_m) >= 2:
+                axr1.plot(x_m, tot_mes_vals, marker="o", markersize=5.5, linewidth=1.6, linestyle="--", color="#0284C7")
+
+            max_yr1 = max(1, max(tot_mes_vals))
+            axr1.set_ylim(0, max_yr1 * 1.28)
+            axr1.set_xlim(-0.55, len(x_m) - 0.45)
+
+            for i, (r_v, i_v, t_v) in enumerate(zip(res_mes_vals, inf_mes_vals, tot_mes_vals)):
+                axr1.text(i, t_v + max_yr1 * 0.025, f"{t_v:,} exp.", ha="center", va="bottom", fontsize=8.2, fontweight="bold", color="#0F172A")
+                if r_v > max_yr1 * 0.10:
+                    axr1.text(i, r_v / 2, f"{r_v:,}", ha="center", va="center", fontsize=7.3, fontweight="bold", color="white")
+                if i_v > max_yr1 * 0.08:
+                    axr1.text(i, r_v + i_v / 2, f"{i_v:,}", ha="center", va="center", fontsize=7.0, fontweight="bold", color="white")
+
+            axr1.set_xticks(x_m)
+            axr1.set_xticklabels(x_mes_lbl, fontsize=8.5, fontweight="bold", color="#1E293B")
+            axr1.set_title(f"Gráfico 3.1 — Evolución Mensual de Producción ({anio_max_pr})", fontsize=9.5, fontweight="bold", color="#7F1D1D", pad=10)
+            axr1.grid(axis="y", linestyle="--", alpha=0.35)
+            axr1.spines["top"].set_visible(False)
+            axr1.spines["right"].set_visible(False)
+            axr1.legend(loc="upper right", fontsize=7.3, frameon=True, facecolor="#F8FAFC", edgecolor="#CBD5E1")
+
+            # --- GRÁFICO 3.2: PRODUCCIÓN POR UNIDAD SIN CORTAR NOMBRES ---
+            df_u_plot = t_3_3[~t_3_3["Unidad Orgánica / Funcional"].str.upper().str.startswith("TOTAL")].head(7).iloc[::-1]
+            yu = np.arange(len(df_u_plot))
+            axr2.barh(yu, df_u_plot["Resoluciones"], height=0.58, label="Resoluciones", color="#1E3A8A", edgecolor="#0F172A", linewidth=0.4)
+            axr2.barh(yu, df_u_plot["Informes"], height=0.58, left=df_u_plot["Resoluciones"], label="Informes", color="#D97706", edgecolor="#0F172A", linewidth=0.4)
+
+            max_xr2 = max(1, int(df_u_plot["Total"].max()))
+            axr2.set_xlim(0, max_xr2 * 1.28)
+            for idx_y, (_, r_u) in zip(yu, df_u_plot.iterrows()):
+                axr2.text(
+                    int(r_u["Total"]) + max_xr2 * 0.02,
+                    idx_y,
+                    f"{int(r_u['Total']):,} ({r_u['% Part.']:.1f}%)",
+                    va="center",
+                    ha="left",
+                    fontsize=7.6,
+                    fontweight="bold",
+                    color="#0F172A"
+                )
+
+            etiq_u_envueltas = [textwrap.fill(str(u), width=30) for u in df_u_plot["Unidad Orgánica / Funcional"]]
+            axr2.set_yticks(yu)
+            axr2.set_yticklabels(etiq_u_envueltas, fontsize=6.9, fontweight="bold", color="#1E293B")
+            axr2.set_title(f"Gráfico 3.2 — Producción por Unidad ({mes_act_lbl})", fontsize=9.5, fontweight="bold", color="#7F1D1D", pad=10)
+            axr2.grid(axis="x", linestyle="--", alpha=0.35)
+            axr2.spines["top"].set_visible(False)
+            axr2.spines["right"].set_visible(False)
+            axr2.legend(loc="lower right", fontsize=7.3, frameon=True, facecolor="#F8FAFC", edgecolor="#CBD5E1")
+
+            fig3.subplots_adjust(left=0.05, right=0.98, top=0.86, bottom=0.13, wspace=0.58)
+            incrustar_figura(fig3, ancho_mm=277, alto_mm=68)
+
         if not t_3_3.empty:
-            dibujar_tabla_pdf(f"3.3. Producción por Unidad - {mes_act_lbl}", t_3_3, max_filas=60)
+            dibujar_tabla_ejecutiva(f"3.3. Producción por Unidad Orgánica / Funcional - {mes_act_lbl}", t_3_3, max_filas=60)
+
         if not t_3_4.empty:
-            dibujar_tabla_pdf(f"3.4. Producción por Magistrado - {mes_act_lbl}", t_3_4, max_filas=60)
+            t_3_4_pdf = t_3_4.copy()
+            if "N°" not in t_3_4_pdf.columns:
+                nums_mag = []
+                contador_mag = 1
+                for _, r_m in t_3_4_pdf.iterrows():
+                    if str(r_m["Magistrado"]).strip().upper().startswith("TOTAL"):
+                        nums_mag.append("")
+                    else:
+                        nums_mag.append(str(contador_mag))
+                        contador_mag += 1
+                t_3_4_pdf.insert(0, "N°", nums_mag)
+
+            dibujar_tabla_ejecutiva(f"3.4. Ranking de Producción por Magistrado - {mes_act_lbl}", t_3_4_pdf, max_filas=60)
+
+            # Gráfico de Impacto: Ranking de Producción por Magistrado (Estirado y sin números en etiquetas)
+            df_mag_plot = t_3_4_pdf[~t_3_4_pdf["Magistrado"].str.upper().str.startswith("TOTAL")].head(15).iloc[::-1]
+            if not df_mag_plot.empty:
+                fig4, axm = plt.subplots(figsize=(15.0, 4.3), dpi=220)
+                fig4.patch.set_facecolor("white")
+
+                ym = np.arange(len(df_mag_plot))
+                axm.barh(ym, df_mag_plot["Resoluciones"], height=0.62, label="Resoluciones", color="#1E3A8A", edgecolor="#0F172A", linewidth=0.4)
+                axm.barh(ym, df_mag_plot["Informes"], height=0.62, left=df_mag_plot["Resoluciones"], label="Informes", color="#F59E0B", edgecolor="#0F172A", linewidth=0.4)
+
+                max_xm = max(1, int(df_mag_plot["Total"].max()))
+                axm.set_xlim(0, max_xm * 1.18)
+
+                for idx_y, (_, r_m) in zip(ym, df_mag_plot.iterrows()):
+                    tot_m = int(r_m["Total"])
+                    pct_m = float(r_m["% Part."])
+                    axm.text(
+                        tot_m + max_xm * 0.012,
+                        idx_y,
+                        f"{tot_m:,} exp. ({pct_m:.2f}%)",
+                        va="center",
+                        ha="left",
+                        fontsize=7.8,
+                        fontweight="bold",
+                        color="#0F172A"
+                    )
+
+                prom_mag = float(t_3_4_pdf[~t_3_4_pdf["Magistrado"].str.upper().str.startswith("TOTAL")]["Total"].mean())
+                axm.axvline(prom_mag, color="#DC2626", linestyle="--", linewidth=1.4, label=f"Promedio: {prom_mag:.1f} exp./mag.")
+
+                etiq_mag = [str(r_m["Magistrado"])[:42] for _, r_m in df_mag_plot.iterrows()]
+                axm.set_yticks(ym)
+                axm.set_yticklabels(etiq_mag, fontsize=7.8, fontweight="bold", color="#1E293B")
+                axm.set_title(f"Gráfico 3.3 — Impacto de Producción por Magistrado ({mes_act_lbl})", fontsize=10.0, fontweight="bold", color="#7F1D1D", pad=8)
+                axm.set_xlabel("Cantidad de Expedientes Resueltos / Informados", fontsize=8.0, fontweight="bold", color="#334155")
+                axm.grid(axis="x", linestyle="--", alpha=0.35)
+                axm.spines["top"].set_visible(False)
+                axm.spines["right"].set_visible(False)
+                axm.legend(loc="lower right", fontsize=7.8, frameon=True, facecolor="#F8FAFC", edgecolor="#CBD5E1")
+
+                fig4.subplots_adjust(left=0.22, right=0.99, top=0.88, bottom=0.13)
+                incrustar_figura(fig4, ancho_mm=277, alto_mm=84)
 
         return bytes(pdf.output())
 

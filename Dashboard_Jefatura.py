@@ -3061,6 +3061,56 @@ else:
         cnt_p91_240 = int(((df_p_act["Dias_Calc"] >= 91) & (df_p_act["Dias_Calc"] <= 240)).sum())
         tot_prod_mes_pdf = len(df_pr_mes_act)
 
+        # Cálculo 100 % automatizado del mes anterior según el mes actual de producción
+        tot_prod_ant_pdf = 0
+
+        _t31_ref = locals().get("t_3_1") if isinstance(locals().get("t_3_1"), pd.DataFrame) else globals().get("t_3_1")
+        if isinstance(_t31_ref, pd.DataFrame) and not _t31_ref.empty:
+            col_per_31 = _t31_ref.columns[0]
+            col_tot_31 = next((c for c in _t31_ref.columns if norm_txt(str(c)) == "TOTAL"), None)
+            if col_tot_31 is not None:
+                filas_ant_31 = _t31_ref[
+                    _t31_ref[col_per_31].astype(str).apply(norm_txt).str.contains("ANTERIOR", na=False)
+                ]
+                if not filas_ant_31.empty:
+                    tot_prod_ant_pdf = int(pd.to_numeric(filas_ant_31[col_tot_31], errors="coerce").fillna(0).iloc[0])
+
+        _df_pr_ref = locals().get("df_pr_f") if isinstance(locals().get("df_pr_f"), pd.DataFrame) else globals().get("df_pr_f")
+        if tot_prod_ant_pdf == 0 and isinstance(_df_pr_ref, pd.DataFrame) and not _df_pr_ref.empty:
+            col_f_pr = next(
+                (c for c in ["Fecha_Desc_Dt", "Fecha Descargo", "Fecha_Descargo", "Fecha de Descargo", "Fecha"] if c in _df_pr_ref.columns),
+                None
+            )
+            if col_f_pr is not None:
+                s_f_pr = pd.to_datetime(_df_pr_ref[col_f_pr], dayfirst=True, errors="coerce")
+                df_pr_fechas = _df_pr_ref.loc[s_f_pr.notna()].copy()
+                df_pr_fechas["_F_PR"] = s_f_pr.loc[s_f_pr.notna()]
+
+                if not df_pr_fechas.empty:
+                    _df_mes_act_ref = locals().get("df_pr_mes_act") if isinstance(locals().get("df_pr_mes_act"), pd.DataFrame) else globals().get("df_pr_mes_act")
+                    if isinstance(_df_mes_act_ref, pd.DataFrame) and not _df_mes_act_ref.empty and col_f_pr in _df_mes_act_ref.columns:
+                        s_f_act = pd.to_datetime(_df_mes_act_ref[col_f_pr], dayfirst=True, errors="coerce").dropna()
+                        f_ref_act = s_f_act.max() if not s_f_act.empty else df_pr_fechas["_F_PR"].max()
+                    else:
+                        f_ref_act = df_pr_fechas["_F_PR"].max()
+
+                    y_act_pr, m_act_pr = int(f_ref_act.year), int(f_ref_act.month)
+                    y_ant_pr, m_ant_pr = (y_act_pr - 1, 12) if m_act_pr == 1 else (y_act_pr, m_act_pr - 1)
+
+                    tot_prod_ant_pdf = int((
+                        (df_pr_fechas["_F_PR"].dt.year == y_ant_pr) &
+                        (df_pr_fechas["_F_PR"].dt.month == m_ant_pr)
+                    ).sum())
+
+        if tot_prod_ant_pdf > 0:
+            var_pct_prod = ((tot_prod_mes_pdf - tot_prod_ant_pdf) / tot_prod_ant_pdf) * 100
+            signo_var = "+" if var_pct_prod > 0 else ""
+            lbl_var_prod = f"{signo_var}{var_pct_prod:.1f}% vs. mes ant. ({tot_prod_ant_pdf:,})"
+        else:
+            lbl_var_prod = "Sin base mes ant."
+
+        mes_full_kpi = str(mes_act_lbl).strip().upper() if str(mes_act_lbl).strip() else "MES"
+
         # Cálculo dinámico de Tarjeta 5: SIN INVENTARIAR (desde Nota de Inventario en df_act_sede)
         col_nota_inv = next((c for c in df_act_sede.columns if "NOTA" in str(c).upper() and "INVENTARIO" in str(c).upper()), None)
         if col_nota_inv is not None:
@@ -3099,11 +3149,14 @@ else:
                 est_ant = str(row_ant.get("Estado_Grupo", "")).strip()
                 sub_antiguo_pdf = f"{desp_ant} | {et_ant} | {est_ant}"
 
+        res_mes_cnt = int((~df_pr_mes_act["Es_Informe"]).sum())
+        inf_mes_cnt = int(df_pr_mes_act["Es_Informe"].sum())
+
         kpis_cards = [
             ("1. CARGA TOTAL", f"{tot_carga_pdf:,} exp.", f"Trám: {tot_tram_pdf:,} | Res.Imp: {tot_res_pdf:,}", (30, 58, 138), (239, 246, 255)),
             ("2. RIESGO PRESC. (<=240d)", f"{tot_presc_pdf:,} exp.", f"Presc: {cnt_p0:,} | 1-90d: {cnt_p1_90:,} | 91-240d: {cnt_p91_240:,}", (153, 27, 27), (254, 242, 242)),
             ("3. EN JEFATURA", f"{tot_jef_pdf:,} exp.", f"{(tot_jef_pdf/max(1,tot_carga_pdf)*100):.2f}% de la carga total", (146, 64, 14), (255, 251, 235)),
-            (f"4. PROD. {mes_act_lbl.upper()[:11]}", f"{tot_prod_mes_pdf:,} exp.", f"Res: {int((~df_pr_mes_act['Es_Informe']).sum()):,} | Inf: {int(df_pr_mes_act['Es_Informe'].sum()):,}", (6, 95, 70), (236, 253, 245)),
+            (f"4. PROD. {mes_full_kpi}", f"{tot_prod_mes_pdf:,} exp.", f"{lbl_var_prod} | Res:{res_mes_cnt:,} Inf:{inf_mes_cnt:,}", (6, 95, 70), (236, 253, 245)),
             ("5. SIN INVENTARIAR", f"{tot_no_inv_pdf:,} exp.", f"Trám: {tram_no_inv_pdf:,} | Res.Imp: {res_no_inv_pdf:,}", (71, 85, 105), (248, 250, 252)),
             ("6. EXP. MÁS ANTIGUO", val_antiguo_pdf, sub_antiguo_pdf, (217, 119, 6), (255, 251, 235)),
         ]
@@ -3119,17 +3172,17 @@ else:
             pdf.set_fill_color(*col_borde)
             pdf.rect(x_c, y_kpi, 1.8, 17, "F")
             pdf.set_xy(x_c + 2.6, y_kpi + 1.5)
-            pdf.set_font("Helvetica", "B", 6.2)
+            pdf.set_font("Helvetica", "B", 5.8)
             pdf.set_text_color(*col_borde)
-            pdf.cell(w_card - 3.2, 4, limpiar_latin1(tit_c[:24]), ln=True)
+            pdf.cell(w_card - 3.2, 4, limpiar_latin1(tit_c), ln=True)
             pdf.set_x(x_c + 2.6)
             pdf.set_font("Helvetica", "B", 10.5)
             pdf.set_text_color(15, 23, 42)
             pdf.cell(w_card - 3.2, 5.5, limpiar_latin1(val_c), ln=True)
             pdf.set_x(x_c + 2.6)
-            pdf.set_font("Helvetica", "", 5.6)
-            pdf.set_text_color(71, 85, 105)
-            pdf.cell(w_card - 3.2, 4, limpiar_latin1(sub_c[:36]), ln=True)
+            pdf.set_font("Helvetica", "B", 5.2)
+            pdf.set_text_color(185, 28, 28)
+            pdf.cell(w_card - 3.2, 4, limpiar_latin1(sub_c[:48]), ln=True)
         pdf.set_y(y_kpi + 20)
 
         def dibujar_banner_seccion(texto_sec):
@@ -3154,23 +3207,30 @@ else:
             "MONITOREO: DE 91 A 240": (139, 92, 246)
         }
 
-        def dibujar_tabla_ejecutiva(titulo, df_tab, max_filas=50, con_vinetas_presc=False):
+        def dibujar_tabla_ejecutiva(titulo, df_tab, max_filas=50, con_vinetas_presc=False, subtitulo_top="", nota_pie=""):
             if df_tab is None or df_tab.empty:
                 return
             df_show = pd.concat([df_tab.head(max_filas - 1), df_tab.tail(1)], ignore_index=True) if len(df_tab) > max_filas else df_tab.copy()
             cols = [c for c in df_show.columns if not str(c).startswith("_")]
             n_cols = len(cols)
 
-            if pdf.get_y() > 165:
+            if pdf.get_y() > 158:
                 pdf.add_page()
 
-            pdf.set_font("Helvetica", "B", 9)
+            pdf.set_font("Helvetica", "B", 9.2)
             pdf.set_text_color(127, 29, 29)
-            pdf.cell(0, 5.5, limpiar_latin1(titulo), ln=True)
+            pdf.cell(0, 5.2, limpiar_latin1(titulo), ln=True)
+
+            if subtitulo_top:
+                pdf.set_font("Helvetica", "I", 7.0)
+                pdf.set_text_color(71, 85, 105)
+                pdf.cell(0, 4.2, limpiar_latin1(subtitulo_top), ln=True)
+
+            tiene_doble_header = any(" - Trámite" in str(c) or " - Res. Impug." in str(c) for c in cols)
 
             if cols[0] == "N°":
-                w_num = 8.5
-                w_nom = 54.0 if n_cols > 8 else 112.0
+                w_num = 8.0
+                w_nom = 64.0 if n_cols > 8 else 112.0
                 w_resto = (277.0 - w_num - w_nom) / max(1, (n_cols - 2))
                 anchos = [w_num, w_nom] + [w_resto] * (n_cols - 2)
             else:
@@ -3178,34 +3238,79 @@ else:
                 w_resto = (277.0 - w_primera) / max(1, (n_cols - 1))
                 anchos = [w_primera] + [w_resto] * (n_cols - 1)
 
-            font_h = 5.8 if n_cols >= 12 else (6.6 if n_cols >= 8 else 7.5)
-            pdf.set_font("Helvetica", "B", font_h)
-            pdf.set_fill_color(30, 41, 59)
-            pdf.set_text_color(255, 255, 255)
             pdf.set_draw_color(148, 163, 184)
 
-            for i, c in enumerate(cols):
-                etiq = str(c)
-                etiq = (
-                    etiq.replace(" - Trámite", " Tr.")
-                    .replace(" - Res. Impug.", " Res.")
-                    .replace("Total - Trámite", "Tot.Tr")
-                    .replace("Total - Res. Impug.", "Tot.Rs")
-                    .replace("Resuelto - Impug. Tránsito", "Resuelto - Impug.")
-                    .replace("Rango de Riesgo de Expedientes Prescritos y por Prescribir", "Rango de Riesgo Presc. / Por Presc.")
-                    .replace("Prescritos (<=0d)", "Presc(<=0d)")
-                    .replace("Crítico (1-15d)", "Crít(1-15d)")
-                    .replace("Alto (16-30d)", "Alto(16-30d)")
-                    .replace("Moderado (31-60d)", "Mod(31-60d)")
-                    .replace("Preventivo (61-90d)", "Prev(61-90d)")
-                    .replace("Monitoreo (91-240d)", "Mon(91-240d)")
-                )
-                max_ch = max(4, int(anchos[i] / (font_h * 0.24)))
-                align_h = "C" if (i == 0 and cols[0] == "N°") else ("L" if (i == 0 or (i == 1 and cols[0] == "N°")) else "C")
-                pdf.cell(anchos[i], 6.6, limpiar_latin1(etiq[:max_ch]), border=1, align=align_h, fill=True)
-            pdf.ln()
+            if tiene_doble_header:
+                y_h1 = pdf.get_y()
+                h_row1 = 5.5
+                h_row2 = 5.2
+                font_h1 = 6.6 if n_cols >= 16 else 7.2
+                font_h2 = 5.4 if n_cols >= 16 else 6.0
 
-            font_b = 6.2 if n_cols >= 12 else (6.8 if n_cols >= 8 else 7.4)
+                idx_col = 0
+                x_cursor = 10.0
+                while idx_col < n_cols:
+                    col_name = str(cols[idx_col])
+                    if idx_col + 1 < n_cols and " - Trámite" in col_name and " - Res. Impug." in str(cols[idx_col + 1]):
+                        grupo_lbl = col_name.replace(" - Trámite", "").strip()
+                        if grupo_lbl.lower() == "total":
+                            grupo_lbl = "Total por estado"
+                        w_par = anchos[idx_col] + anchos[idx_col + 1]
+
+                        pdf.set_xy(x_cursor, y_h1)
+                        pdf.set_fill_color(30, 41, 59)
+                        pdf.set_text_color(255, 255, 255)
+                        pdf.set_font("Helvetica", "B", font_h1)
+                        pdf.cell(w_par, h_row1, limpiar_latin1(grupo_lbl), border=1, align="C", fill=True)
+
+                        pdf.set_xy(x_cursor, y_h1 + h_row1)
+                        pdf.set_fill_color(23, 37, 84)
+                        pdf.set_text_color(147, 197, 253)
+                        pdf.set_font("Helvetica", "B", font_h2)
+                        pdf.cell(anchos[idx_col], h_row2, limpiar_latin1("Trámite"), border=1, align="C", fill=True)
+
+                        pdf.set_xy(x_cursor + anchos[idx_col], y_h1 + h_row1)
+                        pdf.set_fill_color(30, 41, 59)
+                        pdf.set_text_color(253, 186, 116)
+                        pdf.set_font("Helvetica", "B", font_h2)
+                        pdf.cell(anchos[idx_col + 1], h_row2, limpiar_latin1("Res. Impug."), border=1, align="C", fill=True)
+
+                        x_cursor += w_par
+                        idx_col += 2
+                    else:
+                        pdf.set_xy(x_cursor, y_h1)
+                        pdf.set_fill_color(30, 41, 59)
+                        pdf.set_text_color(255, 255, 255)
+                        pdf.set_font("Helvetica", "B", font_h1)
+                        align_s = "C" if (idx_col == 0 and cols[0] == "N°") else ("L" if (idx_col == 0 or (idx_col == 1 and cols[0] == "N°")) else "C")
+                        pdf.cell(anchos[idx_col], h_row1 + h_row2, limpiar_latin1(col_name), border=1, align=align_s, fill=True)
+                        x_cursor += anchos[idx_col]
+                        idx_col += 1
+
+                pdf.set_xy(10.0, y_h1 + h_row1 + h_row2)
+            else:
+                font_h = 5.8 if n_cols >= 12 else (6.6 if n_cols >= 8 else 7.5)
+                pdf.set_font("Helvetica", "B", font_h)
+                pdf.set_fill_color(30, 41, 59)
+                pdf.set_text_color(255, 255, 255)
+                for i, c in enumerate(cols):
+                    etiq = str(c)
+                    etiq = (
+                        etiq.replace("Resuelto - Impug. Tránsito", "Resuelto - Impug.")
+                        .replace("Rango de Riesgo de Expedientes Prescritos y por Prescribir", "Rango de Riesgo Presc. / Por Presc.")
+                        .replace("Prescritos (<=0d)", "Presc(<=0d)")
+                        .replace("Crítico (1-15d)", "Crít(1-15d)")
+                        .replace("Alto (16-30d)", "Alto(16-30d)")
+                        .replace("Moderado (31-60d)", "Mod(31-60d)")
+                        .replace("Preventivo (61-90d)", "Prev(61-90d)")
+                        .replace("Monitoreo (91-240d)", "Mon(91-240d)")
+                    )
+                    max_ch = max(4, int(anchos[i] / (font_h * 0.24)))
+                    align_h = "C" if (i == 0 and cols[0] == "N°") else ("L" if (i == 0 or (i == 1 and cols[0] == "N°")) else "C")
+                    pdf.cell(anchos[i], 6.6, limpiar_latin1(etiq[:max_ch]), border=1, align=align_h, fill=True)
+                pdf.ln()
+
+            font_b = 6.1 if n_cols >= 14 else (6.7 if n_cols >= 8 else 7.4)
             for idx, row in df_show.iterrows():
                 texto_check = " ".join([str(row[c]) for c in cols[:2]])
                 es_tot = any(p in texto_check.upper() for p in ["TOTAL", "SUBTOTAL"])
@@ -3242,7 +3347,7 @@ else:
                         for em in ["🔴", "🟡", "🟢", "🔵", "🟣"]:
                             txt = txt.replace(em, "").strip()
 
-                    max_cb = max(3, int(anchos[i] / (font_b * 0.23)))
+                    max_cb = max(3, int(anchos[i] / (font_b * 0.22)))
                     align_b = "C" if (i == 0 and cols[0] == "N°") else ("L" if (i == 0 or (i == 1 and cols[0] == "N°")) else "C")
 
                     if color_vineta is not None:
@@ -3260,7 +3365,13 @@ else:
                     else:
                         pdf.cell(anchos[i], 5.5, limpiar_latin1(txt[:max_cb]), border=1, align=align_b, fill=True)
                 pdf.ln()
-            pdf.ln(3)
+
+            if nota_pie:
+                pdf.set_font("Helvetica", "I", 6.8)
+                pdf.set_text_color(71, 85, 105)
+                pdf.cell(0, 4.5, limpiar_latin1(nota_pie), ln=True)
+
+            pdf.ln(2.5)
 
         def incrustar_figura(fig_mpl, ancho_mm=277, alto_mm=64):
             if pdf.get_y() + alto_mm > 192:
@@ -3329,8 +3440,24 @@ else:
         fig1.subplots_adjust(left=0.06, right=0.98, top=0.86, bottom=0.14, wspace=0.22)
         incrustar_figura(fig1, ancho_mm=277, alto_mm=63)
 
-        # 1.2. Carga Procesal por Etapa y Sub-etapas de Calificación
-        dibujar_tabla_ejecutiva(f"1.2. Carga Procesal por Etapa y Sub-etapas de Calificación ({sub_titulo_sec})", t_1_2_etapas)
+        # 1.2. Carga Procesal por Etapa y Sub-etapas de Calificación (con cabecera agrupada)
+        nota_pie_1_2 = locals().get("nota_otros_cal") or globals().get("nota_otros_cal", "")
+        if not nota_pie_1_2 and "Sub_Etapa_Cal" in df_act_sede.columns:
+            df_otros_cal = df_act_sede[
+                (df_act_sede["Etapa_Cat"] == "Calificación") &
+                (df_act_sede["Sub_Etapa_Cal"].astype(str).str.contains("Otros|Pend.", na=False))
+            ]
+            if not df_otros_cal.empty and "Estado" in df_otros_cal.columns:
+                conteo_otros = df_otros_cal["Estado"].value_counts()
+                detalle_str = ", ".join([f"{k} ({v})" for k, v in conteo_otros.items()])
+                nota_pie_1_2 = f"*Detalle Otros en Calificación {sub_titulo_sec} ({len(df_otros_cal)}): {detalle_str}"
+
+        dibujar_tabla_ejecutiva(
+            f"1.2. Carga Procesal por Etapa y Sub-etapas de Calificación ({sub_titulo_sec})",
+            t_1_2_etapas,
+            subtitulo_top="Orden procesal: Calificación (con desglose de sub-etapas) -> Instrucción -> Sanción -> Apelación -> Otros.",
+            nota_pie=nota_pie_1_2
+        )
 
         # 1.3. Sub-desglose de Calificación según Ubicación / Unidad Orgánica (UCIP / UPAD / USAP)
         df_cal_pdf = df_act_sede[df_act_sede["Etapa_Cat"] == "Calificación"].copy()
@@ -3360,8 +3487,12 @@ else:
             t_1_2_cal_ubic = pd.concat([g_cal_u, fila_tot_cal_u], ignore_index=True)
             dibujar_tabla_ejecutiva(f"1.3. Sub-desglose de Calificación según Ubicación / Unidad Orgánica ({sub_titulo_sec})", t_1_2_cal_ubic)
 
-        # 1.4. Carga en Calificación por Mes de Creación, Año y Estado
-        dibujar_tabla_ejecutiva(f"1.4. Carga en Calificación por Mes de Creación, Año y Estado ({sub_titulo_sec})", t_1_3_cal_mes)
+        # 1.4. Carga en Calificación por Mes de Creación, Año y Estado (con cabecera agrupada)
+        dibujar_tabla_ejecutiva(
+            f"1.4. Carga en Calificación por Mes de Creación, Año y Estado ({sub_titulo_sec})",
+            t_1_3_cal_mes,
+            subtitulo_top="Distribución mensual por año de creación y estado procesal en etapa de Calificación."
+        )
 
         # 1.5. En Jefatura ODANC / Sede Central por Etapa
         if not df_jef_pdf.empty:
@@ -3459,6 +3590,154 @@ else:
             incrustar_figura(fig2, ancho_mm=277, alto_mm=64)
 
         # ======================================================================
+        # 2.3. RIESGO DE PRESCRIPCIÓN POR MAGISTRADO (CUADRO + GRÁFICO 2.3)
+        # ======================================================================
+        if not df_p_act.empty:
+            df_p_mag_pdf = df_p_act.copy()
+
+            cols_mag_cand = [
+                c for c in df_p_mag_pdf.columns
+                if any(k in norm_txt(str(c)) for k in ["MAGISTRADO", "RESPONSABLE", "JUEZ", "VOCAL", "PONENTE", "DESPACHO", "UNIDAD"])
+            ]
+            if cols_mag_cand:
+                col_mag_p = next(
+                    (c for c in cols_mag_cand if any(k in norm_txt(str(c)) for k in ["MAGISTRADO", "RESPONSABLE", "JUEZ", "VOCAL"])),
+                    cols_mag_cand[0]
+                )
+                df_p_mag_pdf["_Mag_Grp"] = df_p_mag_pdf[col_mag_p].fillna("SIN ASIGNAR").astype(str).str.strip()
+                df_p_mag_pdf.loc[df_p_mag_pdf["_Mag_Grp"] == "", "_Mag_Grp"] = "SIN ASIGNAR"
+            else:
+                df_p_mag_pdf["_Mag_Grp"] = "SIN MAGISTRADO REGISTRADO"
+
+            if "Rango_Presc" in df_p_mag_pdf.columns:
+                s_rng_p = df_p_mag_pdf["Rango_Presc"].fillna("").astype(str).apply(norm_txt)
+            elif "Dias_Calc" in df_p_mag_pdf.columns:
+                def _rng_p_dias(d):
+                    if pd.isna(d):
+                        return "MONITOREO: DE 91 A 240"
+                    d = float(d)
+                    if d <= 0:
+                        return "PRESCRITOS (<= 0"
+                    if d <= 15:
+                        return "CRITICO: DE 1 A 15"
+                    if d <= 30:
+                        return "ALTO: DE 16 A 30"
+                    if d <= 60:
+                        return "MODERADO: DE 31 A 60"
+                    if d <= 90:
+                        return "PREVENTIVO: DE 61 A 90"
+                    return "MONITOREO: DE 91 A 240"
+                s_rng_p = pd.to_numeric(df_p_mag_pdf["Dias_Calc"], errors="coerce").apply(_rng_p_dias).apply(norm_txt)
+            else:
+                s_rng_p = pd.Series("MONITOREO: DE 91 A 240", index=df_p_mag_pdf.index)
+
+            rangos_23 = [
+                ("Prescritos (<=0d)", ["PRESCRIT", "<= 0", "<=0"]),
+                ("Crítico (1-15d)", ["CRITICO", "1 A 15", "1-15"]),
+                ("Alto (16-30d)", ["ALTO", "16 A 30", "16-30"]),
+                ("Moderado (31-60d)", ["MODERADO", "31 A 60", "31-60"]),
+                ("Preventivo (61-90d)", ["PREVENTIVO", "61 A 90", "61-90"]),
+                ("Monitoreo (91-240d)", ["MONITOREO", "91 A 240", "91-240"]),
+            ]
+
+            filas_23 = []
+            for mag_nom, grp_m in df_p_mag_pdf.groupby("_Mag_Grp", dropna=False):
+                rng_g = s_rng_p.loc[grp_m.index]
+                fila_m = {"Magistrado": str(mag_nom)}
+                for lbl_c, pats in rangos_23:
+                    mask_c = pd.Series(False, index=grp_m.index)
+                    for pat in pats:
+                        mask_c = mask_c | rng_g.str.contains(pat, regex=False, na=False)
+                    fila_m[lbl_c] = int(mask_c.sum())
+                fila_m["Total"] = int(len(grp_m))
+                fila_m["% Part."] = round(len(grp_m) / max(1, tot_presc_pdf) * 100, 2)
+                filas_23.append(fila_m)
+
+            if filas_23:
+                df_23_ord = pd.DataFrame(filas_23).sort_values(
+                    by=["Total", "Prescritos (<=0d)", "Crítico (1-15d)"],
+                    ascending=[False, False, False]
+                ).reset_index(drop=True)
+                df_23_ord.insert(0, "N°", [str(i) for i in range(1, len(df_23_ord) + 1)])
+
+                fila_tot_23 = {
+                    "N°": "",
+                    "Magistrado": f"TOTAL POR MAGISTRADO ({sub_titulo_sec})",
+                    "Prescritos (<=0d)": int(df_23_ord["Prescritos (<=0d)"].sum()),
+                    "Crítico (1-15d)": int(df_23_ord["Crítico (1-15d)"].sum()),
+                    "Alto (16-30d)": int(df_23_ord["Alto (16-30d)"].sum()),
+                    "Moderado (31-60d)": int(df_23_ord["Moderado (31-60d)"].sum()),
+                    "Preventivo (61-90d)": int(df_23_ord["Preventivo (61-90d)"].sum()),
+                    "Monitoreo (91-240d)": int(df_23_ord["Monitoreo (91-240d)"].sum()),
+                    "Total": int(df_23_ord["Total"].sum()),
+                    "% Part.": 100.0
+                }
+                t_2_3_mag_pdf = pd.concat([df_23_ord, pd.DataFrame([fila_tot_23])], ignore_index=True)
+
+                dibujar_tabla_ejecutiva(
+                    f"2.3. Riesgo de Prescripción por Magistrado ({sub_titulo_sec})",
+                    t_2_3_mag_pdf,
+                    max_filas=60
+                )
+
+                df_23_plot = df_23_ord.head(15).iloc[::-1]
+                if not df_23_plot.empty:
+                    fig2_3, axpm = plt.subplots(figsize=(15.0, 4.3), dpi=220)
+                    fig2_3.patch.set_facecolor("white")
+
+                    ypm = np.arange(len(df_23_plot))
+                    izq_23 = np.zeros(len(df_23_plot))
+                    series_23 = [
+                        ("Prescritos (<=0d)", "Prescritos (<=0d)", "#EF4444"),
+                        ("Crítico (1-15d)", "Crítico (1-15d)", "#FACC15"),
+                        ("Alto (16-30d)", "Alto (16-30d)", "#65A30D"),
+                        ("Moderado (31-60d)", "Moderado (31-60d)", "#2563EB"),
+                        ("Preventivo (61-90d)", "Preventivo (61-90d)", "#06B6D4"),
+                        ("Monitoreo (91-240d)", "Monitoreo (91-240d)", "#8B5CF6"),
+                    ]
+
+                    for col_s, lbl_s, hex_s in series_23:
+                        vals_s = df_23_plot[col_s].values.astype(float)
+                        axpm.barh(
+                            ypm, vals_s, height=0.62, left=izq_23,
+                            label=lbl_s, color=hex_s, edgecolor="#334155", linewidth=0.45
+                        )
+                        izq_23 += vals_s
+
+                    max_x23 = max(1, int(df_23_plot["Total"].max()))
+                    axpm.set_xlim(0, max_x23 * 1.18)
+
+                    for idx_y, (_, r_23) in zip(ypm, df_23_plot.iterrows()):
+                        tot_23 = int(r_23["Total"])
+                        pct_23 = float(r_23["% Part."])
+                        axpm.text(
+                            tot_23 + max_x23 * 0.012,
+                            idx_y,
+                            f"{tot_23:,} exp. ({pct_23:.2f}%)",
+                            va="center",
+                            ha="left",
+                            fontsize=7.8,
+                            fontweight="bold",
+                            color="#0F172A"
+                        )
+
+                    etiq_23 = [str(r_23["Magistrado"])[:42] for _, r_23 in df_23_plot.iterrows()]
+                    axpm.set_yticks(ypm)
+                    axpm.set_yticklabels(etiq_23, fontsize=7.8, fontweight="bold", color="#1E293B")
+                    axpm.set_title(
+                        f"Gráfico 2.3 — Riesgo de Prescripción por Magistrado ({sub_titulo_sec})",
+                        fontsize=10.0, fontweight="bold", color="#7F1D1D", pad=8
+                    )
+                    axpm.set_xlabel("Cantidad de Expedientes en Riesgo (<= 240 días)", fontsize=8.0, fontweight="bold", color="#334155")
+                    axpm.grid(axis="x", linestyle="--", alpha=0.35)
+                    axpm.spines["top"].set_visible(False)
+                    axpm.spines["right"].set_visible(False)
+                    axpm.legend(loc="lower right", fontsize=7.2, ncol=2, frameon=True, facecolor="#F8FAFC", edgecolor="#CBD5E1")
+
+                    fig2_3.subplots_adjust(left=0.22, right=0.99, top=0.88, bottom=0.13)
+                    incrustar_figura(fig2_3, ancho_mm=277, alto_mm=84)
+
+        # ======================================================================
         # SECCIÓN 3: PRODUCCIÓN Y PRONUNCIAMIENTOS
         # ======================================================================
         dibujar_banner_seccion(f"3. PRODUCCIÓN Y PRONUNCIAMIENTOS ({sub_titulo_sec})")
@@ -3476,7 +3755,6 @@ else:
             )
             fig3.patch.set_facecolor("white")
 
-            # --- GRÁFICO 3.1: EVOLUCIÓN MENSUAL DESGLOSADA (RESOLUCIONES + INFORMES) ---
             df_pr_anio_g = df_pr_f.dropna(subset=["Fecha_Desc_Dt"]).copy()
             anio_max_pr = int(df_pr_anio_g["Fecha_Desc_Dt"].dt.year.max())
             df_pr_anio_g = df_pr_anio_g[df_pr_anio_g["Fecha_Desc_Dt"].dt.year == anio_max_pr]
@@ -3515,7 +3793,6 @@ else:
             axr1.spines["right"].set_visible(False)
             axr1.legend(loc="upper right", fontsize=7.3, frameon=True, facecolor="#F8FAFC", edgecolor="#CBD5E1")
 
-            # --- GRÁFICO 3.2: PRODUCCIÓN POR UNIDAD SIN CORTAR NOMBRES ---
             df_u_plot = t_3_3[~t_3_3["Unidad Orgánica / Funcional"].str.upper().str.startswith("TOTAL")].head(7).iloc[::-1]
             yu = np.arange(len(df_u_plot))
             axr2.barh(yu, df_u_plot["Resoluciones"], height=0.58, label="Resoluciones", color="#1E3A8A", edgecolor="#0F172A", linewidth=0.4)
@@ -3565,7 +3842,6 @@ else:
 
             dibujar_tabla_ejecutiva(f"3.4. Ranking de Producción por Magistrado - {mes_act_lbl}", t_3_4_pdf, max_filas=60)
 
-            # Gráfico de Impacto: Ranking de Producción por Magistrado (Estirado y sin números en etiquetas)
             df_mag_plot = t_3_4_pdf[~t_3_4_pdf["Magistrado"].str.upper().str.startswith("TOTAL")].head(15).iloc[::-1]
             if not df_mag_plot.empty:
                 fig4, axm = plt.subplots(figsize=(15.0, 4.3), dpi=220)

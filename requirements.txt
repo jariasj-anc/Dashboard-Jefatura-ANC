@@ -1,9 +1,11 @@
 streamlit
 pandas
 numpy
+plotly
 openpyxl
 xlsxwriter
 fpdf2
 matplotlib
+Pillow
 
 
